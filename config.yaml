@@ -1,0 +1,4 @@
+app_host: 0.0.0.0
+app_port: 9999
+db:
+  dbname: zero2prod
