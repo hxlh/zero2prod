@@ -3,8 +3,13 @@ use secrecy::Secret;
 #[derive(serde::Deserialize)]
 pub struct Settings {
     pub db: DatabaseSettings,
-    pub app_host: String,
-    pub app_port: u16,
+    pub app: ApplicationSettings,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApplicationSettings {
+    pub port: u16,
+    pub host: String,
 }
 
 #[derive(serde::Deserialize)]

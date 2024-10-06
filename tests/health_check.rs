@@ -97,6 +97,40 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
     }
 }
 
+#[tokio::test]
+async fn subscribe_returns_a_200_when_fields_are_present_but_empty() {
+    // Arrange
+    let app_address = spawn_app().await;
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=&email=ursula_le_guin%40gmail.com", "empty name", 400),
+        ("name=Ursula&email=", "empty email", 400),
+        (
+            "name=Ursula&email=definitely-not-an-email",
+            "invalid email",
+            400,
+        ),
+    ];
+    for (body, description, code) in test_cases {
+        // Act
+        let response = client
+            .post(&format!("http://{}/subscriptions", &app_address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+        // Assert
+        assert_eq!(
+            code,
+            response.status().as_u16(),
+            "The API should not return {} when the payload was {}.",
+            response.status().as_u16(),
+            description
+        );
+    }
+}
+
 async fn spawn_app() -> String {
     Lazy::force(&INIT_LOGGER);
 
@@ -106,6 +140,7 @@ async fn spawn_app() -> String {
     // configure database
     let mut config = get_config().expect("Failed to load configuration");
     config.db.dbname = uuid::Uuid::new_v4().to_string();
+
     let pool = config_random_memory_database(&config).await;
 
     let server = zero2prod::startup::run(listener, pool).expect("Failed to bind address");
@@ -122,7 +157,10 @@ async fn config_random_memory_database(settings: &Settings) -> SqlitePool {
         .expect("Failed to parse connection string")
         .in_memory(true)
         .create_if_missing(true);
-    let pool = SqlitePool::connect_with(options)
+
+    // tracing::info!("database :{}",options);
+
+    let pool: sqlx::Pool<sqlx::Sqlite> = SqlitePool::connect_with(options)
         .await
         .expect("Failed to connect to database");
 
@@ -131,6 +169,5 @@ async fn config_random_memory_database(settings: &Settings) -> SqlitePool {
         .run(&pool)
         .await
         .expect("Failed to migrate database");
-
     pool
 }
