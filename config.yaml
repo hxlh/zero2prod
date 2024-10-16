@@ -2,4 +2,12 @@ app:
   host: 0.0.0.0
   port: 9999
 db:
+  user: postgres
+  password: ''
+  host: localhost
+  port: 54321
   dbname: zero2prod
+
+email:
+  base_url: "localhost"
+  sender_email: "test@gmail.com"

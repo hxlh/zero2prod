@@ -17,10 +17,11 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 sqlx = { version = "0.8",default-features = false,features = [
-    "sqlite",
+    "postgres",
     "runtime-tokio-native-tls",
     "macros",
     "migrate",
+    "chrono"
 ] }
 # tracing
 tracing = { version = "0.1", features = ["log"] }
@@ -44,3 +45,4 @@ claim = "0.5.0"
 fake = "~2.3"
 quickcheck = "0.9.2"
 quickcheck_macros = "0.9.1"
+wiremock = "0.5"

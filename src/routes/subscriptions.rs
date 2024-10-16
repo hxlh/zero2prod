@@ -1,4 +1,6 @@
 use actix_web::{web, HttpResponse, Responder};
+use chrono::Utc;
+use sqlx::{Pool, Postgres};
 
 use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
 
@@ -6,6 +8,15 @@ use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
 pub struct SubscriptionsData {
     name: String,
     email: String,
+}
+
+impl TryInto<NewSubscriber> for SubscriptionsData {
+    type Error = String;
+    fn try_into(self) -> Result<NewSubscriber, Self::Error> {
+        let name = SubscriberName::parse(self.name)?;
+        let email = SubscriberEmail::parse(self.email)?;
+        Ok(NewSubscriber { name, email })
+    }
 }
 
 #[tracing::instrument(
@@ -18,20 +29,11 @@ pub struct SubscriptionsData {
 )]
 pub async fn subscriptions(
     form: web::Form<SubscriptionsData>,
-    pool: web::Data<sqlx::Pool<sqlx::Sqlite>>,
+    pool: web::Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let name = match SubscriberName::parse(form.0.name) {
-        Ok(v) => v,
+    let new_subscriber = match form.0.try_into() {
+        Ok(form) => form,
         Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-    let email = match SubscriberEmail::parse(form.0.email) {
-        Ok(v) => v,
-        Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-
-    let new_subscriber = NewSubscriber {
-        name: name,
-        email: email,
     };
     match save_subscriber(&new_subscriber, &pool).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -45,21 +47,20 @@ pub async fn subscriptions(
 )]
 async fn save_subscriber(
     subscriber: &NewSubscriber,
-    pool: &sqlx::Pool<sqlx::Sqlite>,
+    pool: &Pool<Postgres>,
 ) -> Result<(), sqlx::Error> {
-    let now = chrono::Utc::now().timestamp();
     let subscriber_email = subscriber.email.as_ref();
     let subscriber_name = subscriber.name.as_ref();
 
-    sqlx::query!(
+    sqlx::query(
         r#"
-        INSERT INTO subscriptions (email, name, subscribed_at)
-        Values (?,?,?)
+        INSERT INTO subscriptions (email, name, subscribed_at,status)
+        Values ($1,$2,$3,'confirmed')
         "#,
-        subscriber_email,
-        subscriber_name,
-        now,
     )
+    .bind(subscriber_email)
+    .bind(subscriber_name)
+    .bind(Utc::now())
     .execute(pool)
     .await
     .map_err(|e| {
@@ -67,6 +68,7 @@ async fn save_subscriber(
             "Failed to save new subscriber details in the database: {}",
             e
         );
+        dbg!(&e);
         e
     })?;
     Ok(())
