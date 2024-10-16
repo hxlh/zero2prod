@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use sqlx::{Pool, Postgres};
+use wiremock::MockServer;
 use zero2prod::{configuration::get_config, startup, telemetry::config_logger};
 
 static INIT_LOGGER: Lazy<()> = Lazy::new(|| {
@@ -13,6 +14,7 @@ static INIT_LOGGER: Lazy<()> = Lazy::new(|| {
 pub struct TestApp {
     pub address: String,
     pub db_conn_pool: Pool<Postgres>,
+    pub email_server: MockServer,
 }
 
 impl TestApp {
@@ -30,11 +32,15 @@ impl TestApp {
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&INIT_LOGGER);
 
+    // 启动一个模拟服务器来代替 email服务商 的 API
+    let email_server = MockServer::start().await;
+    
     // configure database
     let config = {
         let mut c = get_config().expect("Failed to load configuration");
         c.db.dbname = format!("test_{}",uuid::Uuid::new_v4().to_string());
         c.app.port = 0;
+        c.email.base_url=email_server.uri();
         c
     };
 
@@ -56,5 +62,6 @@ pub async fn spawn_app() -> TestApp {
     TestApp {
         address: address,
         db_conn_pool: startup::get_conn_pool(&config.db),
+        email_server: email_server,
     }
 }

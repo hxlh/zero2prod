@@ -2,7 +2,10 @@ use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
 use sqlx::{Pool, Postgres};
 
-use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
+use crate::{
+    domain::{NewSubscriber, SubscriberEmail, SubscriberName},
+    email_client::{self, EmailClient},
+};
 
 #[derive(serde::Deserialize)]
 pub struct SubscriptionsData {
@@ -21,7 +24,7 @@ impl TryInto<NewSubscriber> for SubscriptionsData {
 
 #[tracing::instrument(
     name = "Adding a new subscriber",
-    skip(form, pool),
+    skip(form, pool,email_client),
     fields(
         subscriber_email = %form.email,
         subscriber_name = %form.name
@@ -30,15 +33,31 @@ impl TryInto<NewSubscriber> for SubscriptionsData {
 pub async fn subscriptions(
     form: web::Form<SubscriptionsData>,
     pool: web::Data<Pool<Postgres>>,
+    email_client: web::Data<EmailClient>,
 ) -> impl Responder {
     let new_subscriber = match form.0.try_into() {
         Ok(form) => form,
         Err(_) => return HttpResponse::BadRequest().finish(),
     };
-    match save_subscriber(&new_subscriber, &pool).await {
-        Ok(_) => HttpResponse::Ok().finish(),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+
+    if save_subscriber(&new_subscriber, &pool).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
     }
+
+    if email_client
+        .send(
+            new_subscriber.email,
+            "Welcome to our newsletter!",
+            "Welcome to our newsletter!",
+            "Welcome to our newsletter!",
+        )
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+
+    HttpResponse::Ok().finish()
 }
 
 #[tracing::instrument(
