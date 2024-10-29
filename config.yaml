@@ -3,7 +3,7 @@ app:
   port: 9999
 db:
   user: postgres
-  password: ''
+  password: '123456'
   host: localhost
   port: 54321
   dbname: zero2prod

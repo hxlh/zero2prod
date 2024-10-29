@@ -1,10 +1,11 @@
 use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
 use sqlx::{Pool, Postgres};
+use tracing_log::log;
 
 use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
-    email_client::{self, EmailClient},
+    email_client::EmailClient,
 };
 
 #[derive(serde::Deserialize)]
@@ -44,20 +45,40 @@ pub async fn subscriptions(
         return HttpResponse::InternalServerError().finish();
     }
 
-    if email_client
-        .send(
-            new_subscriber.email,
-            "Welcome to our newsletter!",
-            "Welcome to our newsletter!",
-            "Welcome to our newsletter!",
-        )
-        .await
-        .is_err()
-    {
+    if let Err(e) = send_confirmation_email(email_client.as_ref(), new_subscriber).await {
+        log::error!("Failed to send confirmation email: {}", e);
         return HttpResponse::InternalServerError().finish();
     }
 
     HttpResponse::Ok().finish()
+}
+
+#[tracing::instrument(name = "send confirmation email", skip(email_client, new_subscriber))]
+pub async fn send_confirmation_email(
+    email_client: &EmailClient,
+    new_subscriber: NewSubscriber,
+) -> Result<(), reqwest::Error> {
+    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    email_client
+        .send(
+            new_subscriber.email,
+            "Welcome to our newsletter!",
+            &format!(
+                r#"
+            Welcome to our newsletter!
+            访问 {} 确认您的订阅。
+            "#,
+                confirmation_link
+            ),
+            &format!(
+                r#"
+            Welcome to our newsletter!
+            点击 <a href="{}">此处</a> 确认您的订阅。
+            "#,
+                confirmation_link
+            ),
+        )
+        .await
 }
 
 #[tracing::instrument(
@@ -74,7 +95,7 @@ async fn save_subscriber(
     sqlx::query(
         r#"
         INSERT INTO subscriptions (email, name, subscribed_at,status)
-        Values ($1,$2,$3,'confirmed')
+        Values ($1,$2,$3,'pending_confirmation')
         "#,
     )
     .bind(subscriber_email)
