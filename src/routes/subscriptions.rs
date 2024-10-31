@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
 use sqlx::{Pool, Postgres};
 use tracing_log::log;
+use tracing_subscriber::fmt::format;
 
 use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
@@ -35,6 +36,7 @@ pub async fn subscriptions(
     form: web::Form<SubscriptionsData>,
     pool: web::Data<Pool<Postgres>>,
     email_client: web::Data<EmailClient>,
+    base_url: web::Data<String>,
 ) -> impl Responder {
     let new_subscriber = match form.0.try_into() {
         Ok(form) => form,
@@ -45,7 +47,8 @@ pub async fn subscriptions(
         return HttpResponse::InternalServerError().finish();
     }
 
-    if let Err(e) = send_confirmation_email(email_client.as_ref(), new_subscriber).await {
+    if let Err(e) = send_confirmation_email(email_client.as_ref(), new_subscriber, &base_url).await
+    {
         log::error!("Failed to send confirmation email: {}", e);
         return HttpResponse::InternalServerError().finish();
     }
@@ -57,8 +60,12 @@ pub async fn subscriptions(
 pub async fn send_confirmation_email(
     email_client: &EmailClient,
     new_subscriber: NewSubscriber,
+    base_url: &str,
 ) -> Result<(), reqwest::Error> {
-    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    let confirmation_link = format!(
+        "{}/subscriptions/confirm?confirm_token=mytoken",
+        base_url
+    );
     email_client
         .send(
             new_subscriber.email,

@@ -2,7 +2,11 @@ use actix_web::{dev::Server, web, App, HttpServer};
 use sqlx::{Connection, PgConnection, Pool, Postgres};
 use std::{net::TcpListener, time::Duration};
 
-use crate::{configuration::{DatabaseSettings, Settings}, email_client::EmailClient, routes};
+use crate::{
+    configuration::{DatabaseSettings, Settings},
+    email_client::EmailClient,
+    routes,
+};
 
 pub struct Application {
     settings: Settings,
@@ -24,12 +28,18 @@ impl Application {
         let address = format!("{}:{}", settings.app.host, settings.app.port);
 
         let listener = TcpListener::bind(&address)?;
-        let port=listener.local_addr().unwrap().port();
-        settings.app.port=port;
+        let port = listener.local_addr().unwrap().port();
+        settings.app.port = port;
 
+        let server=run(
+            listener, 
+            pool, 
+            email_client,
+            settings.app.base_url.clone(),
+            )?;
         Ok(Self {
             settings: settings,
-            server: run(listener, pool, email_client)?,
+            server: server,
         })
     }
 
@@ -42,23 +52,24 @@ impl Application {
     }
 }
 
-
 pub fn get_conn_pool(settings: &DatabaseSettings) -> Pool<Postgres> {
     Pool::connect_lazy_with(settings.with_db())
 }
 
 async fn config_database(settings: &DatabaseSettings) -> Pool<Postgres> {
-    let mut conn=PgConnection::connect_with(&settings.without_db())
-    .await.expect("Failed to connect to database");
+    let mut conn = PgConnection::connect_with(&settings.without_db())
+        .await
+        .expect("Failed to connect to database");
 
     // 创建数据库
     sqlx::query(&format!(r#"CREATE DATABASE "{}";"#, settings.dbname))
-    .execute(&mut conn)
-    .await
-    .expect("Failed to create database");
+        .execute(&mut conn)
+        .await
+        .expect("Failed to create database");
 
-    let pool=Pool::connect_with(settings.with_db())
-    .await.expect("Failed to connect to database");
+    let pool = Pool::connect_with(settings.with_db())
+        .await
+        .expect("Failed to connect to database");
     // 迁移数据库
     sqlx::migrate!("./migrations")
         .run(&pool)
@@ -72,6 +83,7 @@ pub fn run(
     listener: TcpListener,
     db_conn_pool: Pool<Postgres>,
     email_client: EmailClient,
+    base_url: String,
 ) -> Result<Server, std::io::Error> {
     // 用智能指针包装连接
     let db_conn_pool = web::Data::new(db_conn_pool);
@@ -82,8 +94,10 @@ pub fn run(
             .wrap(tracing_actix_web::TracingLogger::default())
             .route("/health_check", web::get().to(routes::health_check))
             .route("/subscriptions", web::post().to(routes::subscriptions))
+            .route("/subscriptions/confirm", web::get().to(routes::confirm))
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())
+            .app_data(web::Data::new(base_url.clone()))
     })
     .listen(listener)?
     .run();

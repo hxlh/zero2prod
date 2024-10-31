@@ -13,6 +13,7 @@ static INIT_LOGGER: Lazy<()> = Lazy::new(|| {
 
 pub struct TestApp {
     pub address: String,
+    pub port: u16,
     pub db_conn_pool: Pool<Postgres>,
     pub email_server: MockServer,
 }
@@ -20,7 +21,7 @@ pub struct TestApp {
 impl TestApp {
     pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
         reqwest::Client::new()
-            .post(&format!("http://{}/subscriptions", &self.address))
+            .post(&format!("{}/subscriptions", &self.address))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)
             .send()
@@ -34,18 +35,17 @@ pub async fn spawn_app() -> TestApp {
 
     // 启动一个模拟服务器来代替 email服务商 的 API
     let email_server = MockServer::start().await;
-    
+
     // configure database
     let config = {
         let mut c = get_config().expect("Failed to load configuration");
-        c.db.dbname = format!("test_{}",uuid::Uuid::new_v4().to_string());
+        c.db.dbname = format!("test_{}", uuid::Uuid::new_v4().to_string());
         c.app.port = 0;
-        c.email.base_url=email_server.uri();
+        c.email.base_url = email_server.uri();
         c
     };
 
     // init database
-
 
     let server = startup::Application::build(config)
         .await
@@ -53,7 +53,7 @@ pub async fn spawn_app() -> TestApp {
     let config = server.settings().clone();
 
     let address = format!(
-        "{}:{}",
+        "http://{}:{}",
         server.settings().app.host,
         server.settings().app.port
     );
@@ -61,6 +61,7 @@ pub async fn spawn_app() -> TestApp {
 
     TestApp {
         address: address,
+        port: config.app.port,
         db_conn_pool: startup::get_conn_pool(&config.db),
         email_server: email_server,
     }

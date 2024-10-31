@@ -1,9 +1,10 @@
 app:
   host: 0.0.0.0
   port: 9999
+  base_url: http://127.0.0.1
 db:
   user: postgres
-  password: '123456'
+  password: 'postgres'
   host: localhost
   port: 54321
   dbname: zero2prod

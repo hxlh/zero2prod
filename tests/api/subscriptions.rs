@@ -147,9 +147,8 @@ async fn subscribe_sends_a_confirmation_email_with_a_link() {
             .collect::<Vec<_>>();
         links[0].as_str().to_string()
     };
-
-    let html_link = get_links(body_json.get("HtmlBody").unwrap().as_str().unwrap());
-    let text_link = get_links(body_json.get("TextBody").unwrap().as_str().unwrap());
+    let html_link = get_links(&body_json["HtmlBody"].as_str().unwrap());
+    let text_link = get_links(&body_json["TextBody"].as_str().unwrap());
     // must be equal
     assert_eq!(html_link, text_link);
 }
