@@ -137,18 +137,8 @@ async fn subscribe_sends_a_confirmation_email_with_a_link() {
     // assert
     // 获取拦截的请求
     let req = &app.email_server.received_requests().await.unwrap()[0];
-    // 将正文解析为 JSON
-    let body_json: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
 
-    let get_links = |text: &str| {
-        let links = linkify::LinkFinder::new()
-            .links(text)
-            .filter(|link| *link.kind() == linkify::LinkKind::Url)
-            .collect::<Vec<_>>();
-        links[0].as_str().to_string()
-    };
-    let html_link = get_links(&body_json["HtmlBody"].as_str().unwrap());
-    let text_link = get_links(&body_json["TextBody"].as_str().unwrap());
+    let confirmation=app.get_confirm_links_from_req(req);
     // must be equal
-    assert_eq!(html_link, text_link);
+    assert_eq!(confirmation.html_link, confirmation.text_link);
 }

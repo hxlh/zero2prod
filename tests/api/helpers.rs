@@ -11,6 +11,11 @@ static INIT_LOGGER: Lazy<()> = Lazy::new(|| {
     };
 });
 
+pub struct ConfirmationLinks {
+    pub html_link: reqwest::Url,
+    pub text_link: reqwest::Url,
+}
+
 pub struct TestApp {
     pub address: String,
     pub port: u16,
@@ -27,6 +32,31 @@ impl TestApp {
             .send()
             .await
             .expect("Failed to execute request.")
+    }
+
+    pub fn get_confirm_links_from_req(&self, req: &wiremock::Request) -> ConfirmationLinks {
+        let body: serde_json::Value = req.body_json().unwrap();
+        let get_links = |text: &str| {
+            let links: Vec<_> = linkify::LinkFinder::new()
+                .links(text)
+                .filter(|l| *l.kind() == linkify::LinkKind::Url)
+                .collect();
+            assert_eq!(links.len(), 1);
+            let raw_link = links[0].as_str().to_owned();
+            let mut confirmation_link = reqwest::Url::parse(&raw_link).unwrap();
+            // 确保我们没有调用随机的网络 API
+            assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+            confirmation_link.set_port(Some(self.port)).unwrap();
+            confirmation_link
+        };
+
+        let html_link = get_links(&body["HtmlBody"].as_str().unwrap());
+        let text_link = get_links(&body["TextBody"].as_str().unwrap());
+
+        ConfirmationLinks {
+            html_link,
+            text_link,
+        }
     }
 }
 
