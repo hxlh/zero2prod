@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 
 use sqlx::Row;
 use wiremock::{
@@ -142,3 +141,20 @@ async fn subscribe_sends_a_confirmation_email_with_a_link() {
     // must be equal
     assert_eq!(confirmation.html_link, confirmation.text_link);
 }
+
+#[tokio::test]
+async fn subscribe_fails_if_there_is_a_fatal_database_error() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    // 破坏数据库
+    sqlx::query!("ALTER TABLE subscription_tokens DROP COLUMN subscription_token;")
+        .execute(&app.db_conn_pool)
+        .await
+        .unwrap();
+    // Act
+    let response = app.post_subscriptions(body.into()).await;
+    // Assert
+    assert_eq!(response.status().as_u16(), 500);
+}
+
