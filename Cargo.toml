@@ -38,6 +38,8 @@ uuid = { version = "1.0", features = ["v4"] }
 # unicode字符处理
 unicode-segmentation = "1.9.0"
 validator = "0.14"
+# 随机数生成
+rand = { version = "0.8", features=["std_rng"] }
 
 [dev-dependencies]
 # 更清晰的断言

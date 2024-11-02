@@ -1,8 +1,8 @@
 use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
-use sqlx::{Pool, Postgres};
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use sqlx::{Pool, Postgres, Row};
 use tracing_log::log;
-use tracing_subscriber::fmt::format;
 
 use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
@@ -43,11 +43,24 @@ pub async fn subscriptions(
         Err(_) => return HttpResponse::BadRequest().finish(),
     };
 
-    if save_subscriber(&new_subscriber, &pool).await.is_err() {
+    // 保存订阅者信息
+    let id = match save_subscriber(&new_subscriber, &pool).await {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    // 生成token并保存,同时生成订阅确认链接并发送给用户
+    let subscription_token=generate_subscription_token();
+    if save_subscription_token(&pool, id, &subscription_token).await.is_err(){
         return HttpResponse::InternalServerError().finish();
     }
 
-    if let Err(e) = send_confirmation_email(email_client.as_ref(), new_subscriber, &base_url).await
+    if let Err(e) = send_confirmation_email(
+        email_client.as_ref(),
+        new_subscriber,
+        &base_url,
+        &subscription_token,
+    )
+    .await
     {
         log::error!("Failed to send confirmation email: {}", e);
         return HttpResponse::InternalServerError().finish();
@@ -61,10 +74,11 @@ pub async fn send_confirmation_email(
     email_client: &EmailClient,
     new_subscriber: NewSubscriber,
     base_url: &str,
+    confirm_token: &str,
 ) -> Result<(), reqwest::Error> {
     let confirmation_link = format!(
-        "{}/subscriptions/confirm?confirm_token=mytoken",
-        base_url
+        "{}/subscriptions/confirm?confirm_token={}",
+        base_url, confirm_token
     );
     email_client
         .send(
@@ -95,28 +109,66 @@ pub async fn send_confirmation_email(
 async fn save_subscriber(
     subscriber: &NewSubscriber,
     pool: &Pool<Postgres>,
-) -> Result<(), sqlx::Error> {
+) -> Result<i64, sqlx::Error> {
     let subscriber_email = subscriber.email.as_ref();
     let subscriber_name = subscriber.name.as_ref();
 
-    sqlx::query(
+    let row=sqlx::query(
         r#"
         INSERT INTO subscriptions (email, name, subscribed_at,status)
         Values ($1,$2,$3,'pending_confirmation')
+        RETURNING id
         "#,
     )
     .bind(subscriber_email)
     .bind(subscriber_name)
     .bind(Utc::now())
-    .execute(pool)
-    .await
+    .fetch_optional(pool)
+    .await?
+    .ok_or(sqlx::Error::RowNotFound)
     .map_err(|e| {
         tracing::error!(
             "Failed to save new subscriber details in the database: {}",
             e
         );
-        dbg!(&e);
+        e
+    })?;
+
+    let id: i64 = row.get(0);
+
+    Ok(id)
+}
+
+#[tracing::instrument(
+    name ="Saving subscription token in the database."
+    skip(pool, id, token)
+)]
+async fn save_subscription_token(
+    pool: &Pool<Postgres>,
+    id: i64,
+    token: &str,
+)->Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        insert into subscription_tokens (subscriber_id, subscription_token)
+        values ($1, $2)
+        "#,
+    )
+    .bind(id)
+    .bind(token)
+    .execute(pool)
+    .await
+    .map_err(|e|{
+        tracing::error!("Failed to execute query: {:?}",e);
         e
     })?;
     Ok(())
+}
+
+fn generate_subscription_token() -> String {
+    let mut rng = thread_rng();
+    std::iter::repeat_with(|| rng.sample(Alphanumeric))
+        .map(char::from)
+        .take(25)
+        .collect()
 }
