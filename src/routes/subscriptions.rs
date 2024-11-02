@@ -1,14 +1,12 @@
-use std::fmt::write;
 
 use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
     email_client::EmailClient,
 };
-use actix_web::{web, HttpResponse, Responder, ResponseError};
+use actix_web::{web, HttpResponse, ResponseError};
 use chrono::Utc;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use sqlx::{Pool, Postgres, Row, Transaction};
-use tracing_log::log::{self};
 
 #[derive(serde::Deserialize)]
 pub struct SubscriptionsData {
@@ -39,7 +37,8 @@ pub async fn subscriptions(
     email_client: web::Data<EmailClient>,
     base_url: web::Data<String>,
 ) -> Result<HttpResponse, SubscribeError> {
-    let new_subscriber = form.0.try_into()?;
+    let new_subscriber = form.0.try_into()
+    .map_err(|e| SubscribeError::ValidationError(e))?;
 
     let mut tx = pool.begin().await
     .map_err(|e| SubscribeError::PoolError(e))?;
@@ -211,69 +210,24 @@ fn error_chain_fmt(
     Ok(())
 }
 
-
+#[derive(thiserror::Error)]
 pub enum SubscribeError {
+    #[error("{0}")]
     ValidationError(String),
-    SaveTokenError(SaveTokenError),
-    SendEmailError(reqwest::Error),
-    PoolError(sqlx::Error),
-    InsertSubscriberError(sqlx::Error),
-    TransactionCommitError(sqlx::Error),
-}
-impl From<String> for SubscribeError {
-    fn from(value: String) -> Self {
-        SubscribeError::ValidationError(value)
-    }
-}
-impl From<SaveTokenError> for SubscribeError {
-    fn from(value: SaveTokenError) -> Self {
-        Self::SaveTokenError(value)
-    }
-}
-impl From<reqwest::Error> for SubscribeError {
-    fn from(value: reqwest::Error) -> Self {
-        Self::SendEmailError(value)
-    }
-}
-impl std::fmt::Display for SubscribeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SubscribeError::ValidationError(e) => write!(f, "{}", e),
-            // 我们应该在这里怎么做？
-            SubscribeError::SaveTokenError(_) => write!(f, "无法存储新订阅者的确认令牌。"),
-            SubscribeError::SendEmailError(_) => {
-                write!(f, "发送确认电子邮件失败。")
-            },
-            SubscribeError::PoolError(_) => {
-                write!(f, "无法从连接池获取 Postgres 连接")
-            }
-            SubscribeError::InsertSubscriberError(_) => {
-                write!(f, "无法将新订阅者插入数据库。")
-            }
-            SubscribeError::TransactionCommitError(_) => {
-                write!(
-                    f,
-                    "无法提交 SQL 事务以存储新订阅者。"
-                )
-            }
-        }
-    }
+    #[error("无法从连接池获取 Postgres 连接")]
+    PoolError(#[source] sqlx::Error),
+    #[error("无法将新订阅者插入数据库。")]
+    InsertSubscriberError(#[source] sqlx::Error),
+    #[error("无法存储新订阅者的确认令牌。")]
+    SaveTokenError(#[from] SaveTokenError),
+    #[error("无法提交 SQL 事务以存储新订阅者。")]
+    TransactionCommitError(#[source] sqlx::Error),
+    #[error("发送确认电子邮件失败。")]
+    SendEmailError(#[from] reqwest::Error),
 }
 impl std::fmt::Debug for SubscribeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         error_chain_fmt(self, f)
-    }
-}
-impl std::error::Error for SubscribeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SubscribeError::ValidationError(_) => None,
-            SubscribeError::SaveTokenError(e) => Some(e),
-            SubscribeError::SendEmailError(e) => Some(e),
-            SubscribeError::PoolError(e) => Some(e),
-            SubscribeError::InsertSubscriberError(e) => Some(e),
-            SubscribeError::TransactionCommitError(e) => Some(e),
-        }
     }
 }
 impl ResponseError for SubscribeError {

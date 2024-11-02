@@ -40,6 +40,9 @@ unicode-segmentation = "1.9.0"
 validator = "0.14"
 # 随机数生成
 rand = { version = "0.8", features=["std_rng"] }
+# 自定义错误类型
+thiserror = "1"
+
 
 [dev-dependencies]
 # 更清晰的断言
