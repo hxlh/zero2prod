@@ -1,4 +1,3 @@
-
 use sqlx::Row;
 use wiremock::{
     matchers::{self, method, path},
@@ -38,17 +37,17 @@ async fn subscribe_persists_the_new_subscriber() {
     app.post_subscriptions(body.into()).await;
     // assert
 
-    let row= sqlx::query(
+    let row = sqlx::query(
         r#"
     SELECT email, name, status FROM subscriptions
-    "#
+    "#,
     )
     .fetch_one(&app.db_conn_pool)
     .await
     .expect("Failed to fetch saved subscription.");
-    let email:&str= row.try_get("email").unwrap();
-    let name:&str= row.try_get("name").unwrap();
-    let status:&str= row.try_get("status").unwrap();
+    let email: &str = row.try_get("email").unwrap();
+    let name: &str = row.try_get("name").unwrap();
+    let status: &str = row.try_get("status").unwrap();
     assert_eq!(email, "ursula_le_guin@gmail.com");
     assert_eq!(name, "le guin");
     assert_eq!(status, "pending_confirmation");
@@ -137,7 +136,7 @@ async fn subscribe_sends_a_confirmation_email_with_a_link() {
     // 获取拦截的请求
     let req = &app.email_server.received_requests().await.unwrap()[0];
 
-    let confirmation=app.get_confirm_links_from_req(req);
+    let confirmation = app.get_confirm_links_from_req(req);
     // must be equal
     assert_eq!(confirmation.html_link, confirmation.text_link);
 }
@@ -148,7 +147,7 @@ async fn subscribe_fails_if_there_is_a_fatal_database_error() {
     let app = spawn_app().await;
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     // 破坏数据库
-    sqlx::query!("ALTER TABLE subscription_tokens DROP COLUMN subscription_token;")
+    sqlx::query!("ALTER TABLE subscriptions DROP COLUMN email;")
         .execute(&app.db_conn_pool)
         .await
         .unwrap();
@@ -157,4 +156,3 @@ async fn subscribe_fails_if_there_is_a_fatal_database_error() {
     // Assert
     assert_eq!(response.status().as_u16(), 500);
 }
-
