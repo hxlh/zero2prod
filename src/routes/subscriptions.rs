@@ -118,7 +118,7 @@ async fn save_subscriber(
     let subscriber_email = subscriber.email.as_ref();
     let subscriber_name = subscriber.name.as_ref();
 
-    let row = sqlx::query(
+    let id:(i64,) = sqlx::query_as(
         r#"
         INSERT INTO subscriptions (email, name, subscribed_at,status)
         Values ($1,$2,$3,'pending_confirmation')
@@ -135,9 +135,7 @@ async fn save_subscriber(
         e
     })?;
 
-    let id: i64 = row.get(0);
-
-    Ok(id)
+    Ok(id.0)
 }
 
 #[tracing::instrument(

@@ -1,4 +1,4 @@
-use sqlx::Row;
+use sqlx::{FromRow, Row};
 use wiremock::{
     matchers::{self, method, path},
     Mock, ResponseTemplate,
@@ -37,20 +37,24 @@ async fn subscribe_persists_the_new_subscriber() {
     app.post_subscriptions(body.into()).await;
     // assert
 
-    let row = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct Row {
+        email: String,
+        name: String,
+        status: String,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
         r#"
-    SELECT email, name, status FROM subscriptions
-    "#,
+            SELECT email, name, status FROM subscriptions
+        "#,
     )
     .fetch_one(&app.db_conn_pool)
     .await
     .expect("Failed to fetch saved subscription.");
-    let email: &str = row.try_get("email").unwrap();
-    let name: &str = row.try_get("name").unwrap();
-    let status: &str = row.try_get("status").unwrap();
-    assert_eq!(email, "ursula_le_guin@gmail.com");
-    assert_eq!(name, "le guin");
-    assert_eq!(status, "pending_confirmation");
+    assert_eq!(row.email, "ursula_le_guin@gmail.com");
+    assert_eq!(row.name, "le guin");
+    assert_eq!(row.status, "pending_confirmation");
 }
 
 #[tokio::test]
@@ -147,7 +151,7 @@ async fn subscribe_fails_if_there_is_a_fatal_database_error() {
     let app = spawn_app().await;
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     // 破坏数据库
-    sqlx::query!("ALTER TABLE subscriptions DROP COLUMN email;")
+    sqlx::query("ALTER TABLE subscriptions DROP COLUMN email;")
         .execute(&app.db_conn_pool)
         .await
         .unwrap();

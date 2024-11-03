@@ -1,5 +1,5 @@
 use actix_web::{web, HttpResponse};
-use sqlx::{PgPool, Pool, Postgres, Row};
+use sqlx::{PgPool, Pool, Postgres};
 
 #[derive(serde::Deserialize)]
 pub struct Parameters {
@@ -40,32 +40,25 @@ async fn confirm_subscriber(pool: &PgPool, subscriber_id: i64) -> Result<(), sql
     .bind(subscriber_id)
     .execute(pool)
     .await
-    .map_err(|e| {
-        e
-    })?;
+    .map_err(|e| e)?;
 
     Ok(())
 }
 
 #[tracing::instrument(name = "Get subscriber ID by token", skip(pool, token))]
 async fn get_subscriber_id_by_token(pool: &PgPool, token: &str) -> Result<i64, sqlx::Error> {
-    let row = sqlx::query(
+    
+    let subscriber_id: (i64,) = sqlx::query_as(
         r#"
-        select subscriber_id 
-        from subscription_tokens
-        where subscription_token = $1 ;
+            select subscriber_id 
+            from subscription_tokens
+            where subscription_token = $1 ;
         "#,
     )
     .bind(token)
     .fetch_optional(pool)
-    .await
-    .map_err(|e|{
-        e
-    })?
-    .ok_or(sqlx::Error::RowNotFound)
-    .map_err(|e|{
-        e
-    })?;
+    .await?
+    .ok_or(sqlx::Error::RowNotFound)?;
 
-    Ok(row.get(0))
+    Ok(subscriber_id.0)
 }

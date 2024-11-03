@@ -2,7 +2,7 @@ use crate::{domain::SubscriberEmail, email_client, routes::error_chain_fmt};
 use actix_web::{web, HttpResponse, ResponseError};
 use anyhow::Context;
 use reqwest::StatusCode;
-use sqlx::{Pool, Postgres, Transaction};
+use sqlx::{prelude::FromRow, Pool, Postgres, Transaction};
 
 #[derive(serde::Deserialize)]
 pub struct BodyData {
@@ -27,7 +27,12 @@ pub async fn publish_newsletter(
         match subscriber {
             Ok(s) => {
                 email_client
-                    .send(&s.email, &body.title, &body.content.text, &body.content.html)
+                    .send(
+                        &s.email,
+                        &body.title,
+                        &body.content.text,
+                        &body.content.html,
+                    )
                     .await
                     .with_context(|| format!("Failed to send email to {}", &s.email))?;
             }
@@ -54,28 +59,22 @@ struct ConfirmedSubscriber {
 async fn get_confirmed_subscribers(
     tx: &mut Transaction<'_, Postgres>,
 ) -> Result<Vec<Result<ConfirmedSubscriber, anyhow::Error>>, anyhow::Error> {
-    struct Row {
-        email: String,
-    }
-
-    let subscribers = sqlx::query_as!(
-        Row,
+    
+    let subscribers = sqlx::query_as(
         r#"
         select email from subscriptions where status='confirmed';
-        "#
+        "#,
     )
     .fetch_all(&mut **tx)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|r: (String,)| match SubscriberEmail::parse(r.0) {
+        Ok(v) => Ok(ConfirmedSubscriber { email: v }),
+        Err(e) => Err(anyhow::anyhow!(e)),
+    })
+    .collect();
 
-    let confirmed_subscribers = subscribers
-        .into_iter()
-        .map(|r| match SubscriberEmail::parse(r.email) {
-            Ok(v) => Ok(ConfirmedSubscriber { email: v }),
-            Err(e) => Err(anyhow::anyhow!(e)),
-        })
-        .collect();
-
-    Ok(confirmed_subscribers)
+    Ok(subscribers)
 }
 
 #[derive(thiserror::Error)]
