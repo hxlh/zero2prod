@@ -2,7 +2,7 @@ use crate::{domain::SubscriberEmail, email_client, routes::error_chain_fmt};
 use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
 use base64::STANDARD;
-use reqwest::StatusCode;
+use reqwest::{header::HeaderValue, StatusCode};
 use secrecy::Secret;
 use sqlx::{prelude::FromRow, Pool, Postgres, Transaction};
 
@@ -23,10 +23,7 @@ pub async fn publish_newsletter(
     email_client: web::Data<email_client::EmailClient>,
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
-    let creditials = basic_authentication(req.headers())
-    .map_err(|e|{
-        PublishError::AuthError(e)
-    })?;
+    let creditials = basic_authentication(req.headers()).map_err(|e| PublishError::AuthError(e))?;
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     let subscribers = get_confirmed_subscribers(&mut tx).await?;
@@ -65,28 +62,29 @@ struct Credentials {
 }
 
 fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
-    let auth=headers.get("Authorization")
-    .context("Authorization header missing")?
-    .to_str()
-    .context("not only contains visible ASCII chars")?;
+    let auth = headers
+        .get("Authorization")
+        .context("Authorization header missing")?
+        .to_str()
+        .context("not only contains visible ASCII chars")?;
 
-    let encode_segment=auth.strip_prefix("Basic ")
-    .context("not a basic authentication header")?;
+    let encode_segment = auth
+        .strip_prefix("Basic ")
+        .context("not a basic authentication header")?;
 
-    let decode_bytes=base64::decode_config(encode_segment,STANDARD)
-    .context("failed to decode base64 string")?;
+    let decode_bytes = base64::decode_config(encode_segment, STANDARD)
+        .context("failed to decode base64 string")?;
 
-    let credentials=std::str::from_utf8(&decode_bytes)
-    .context("not a valid UTF-8 string")?;
-    
-    let mut credentials_iter=credentials.splitn(2,":");
+    let credentials = std::str::from_utf8(&decode_bytes).context("not a valid UTF-8 string")?;
 
-    let username=credentials_iter
-    .next() 
-    .context("A username must be provided in 'Basic' auth.")?;
-    let pwd=credentials_iter
-    .next()
-    .context("A password must be provided in 'Basic' auth.")?;
+    let mut credentials_iter = credentials.splitn(2, ":");
+
+    let username = credentials_iter
+        .next()
+        .context("A username must be provided in 'Basic' auth.")?;
+    let pwd = credentials_iter
+        .next()
+        .context("A password must be provided in 'Basic' auth.")?;
 
     Ok(Credentials {
         username: username.to_string(),
@@ -102,7 +100,6 @@ struct ConfirmedSubscriber {
 async fn get_confirmed_subscribers(
     tx: &mut Transaction<'_, Postgres>,
 ) -> Result<Vec<Result<ConfirmedSubscriber, anyhow::Error>>, anyhow::Error> {
-    
     let subscribers = sqlx::query_as(
         r#"
         select email from subscriptions where status='confirmed';
@@ -136,10 +133,28 @@ impl std::fmt::Debug for PublishError {
 }
 
 impl ResponseError for PublishError {
-    fn status_code(&self) -> StatusCode {
+    // 默认的 `error_response` 实现会调用 `status_code`。
+    // 我们提供了一个定制的 `error_response` 实现，因此不再需要维护 `status_code` 实现。
+    // fn status_code(&self) -> StatusCode {
+    //     match self {
+    //         PublishError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    //         PublishError::AuthError(_) => StatusCode::UNAUTHORIZED,
+    //     }
+    // }
+    fn error_response(&self) -> HttpResponse<actix_web::body::BoxBody> {
         match self {
-            PublishError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            PublishError::AuthError(_) => StatusCode::UNAUTHORIZED,
+            PublishError::UnexpectedError(_) => {
+                HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            PublishError::AuthError(_) => {
+                let mut response = HttpResponse::new(StatusCode::UNAUTHORIZED);
+                let header_value = HeaderValue::from_str(r#"Basic realm="publish""#).unwrap();
+                response
+                    .headers_mut()
+                    // actix_web::http::header 提供了几个众所周知/标准 HTTP 标头名称的常量集合
+                    .insert(reqwest::header::WWW_AUTHENTICATE, header_value);
+                response
+            }
         }
     }
 }

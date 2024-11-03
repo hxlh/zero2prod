@@ -153,5 +153,5 @@ async fn requests_missing_authorization_are_rejected(){
     .await
     .unwrap();
 
-    assert_eq!(resp.status().as_u16(), 400);
+    assert_eq!(resp.status().as_u16(), 401);
 }
