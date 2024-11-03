@@ -1,7 +1,9 @@
 use crate::{domain::SubscriberEmail, email_client, routes::error_chain_fmt};
-use actix_web::{web, HttpResponse, ResponseError};
+use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
+use base64::STANDARD;
 use reqwest::StatusCode;
+use secrecy::Secret;
 use sqlx::{prelude::FromRow, Pool, Postgres, Transaction};
 
 #[derive(serde::Deserialize)]
@@ -16,10 +18,16 @@ pub struct BodyContext {
 }
 
 pub async fn publish_newsletter(
+    req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     email_client: web::Data<email_client::EmailClient>,
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
+    let creditials = basic_authentication(req.headers())
+    .map_err(|e|{
+        PublishError::AuthError(e)
+    })?;
+
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     let subscribers = get_confirmed_subscribers(&mut tx).await?;
 
@@ -51,6 +59,41 @@ pub async fn publish_newsletter(
     Ok(HttpResponse::Ok().finish())
 }
 
+struct Credentials {
+    username: String,
+    password: Secret<String>,
+}
+
+fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
+    let auth=headers.get("Authorization")
+    .context("Authorization header missing")?
+    .to_str()
+    .context("not only contains visible ASCII chars")?;
+
+    let encode_segment=auth.strip_prefix("Basic ")
+    .context("not a basic authentication header")?;
+
+    let decode_bytes=base64::decode_config(encode_segment,STANDARD)
+    .context("failed to decode base64 string")?;
+
+    let credentials=std::str::from_utf8(&decode_bytes)
+    .context("not a valid UTF-8 string")?;
+    
+    let mut credentials_iter=credentials.splitn(2,":");
+
+    let username=credentials_iter
+    .next() 
+    .context("A username must be provided in 'Basic' auth.")?;
+    let pwd=credentials_iter
+    .next()
+    .context("A password must be provided in 'Basic' auth.")?;
+
+    Ok(Credentials {
+        username: username.to_string(),
+        password: Secret::new(pwd.to_string()),
+    })
+}
+
 struct ConfirmedSubscriber {
     email: SubscriberEmail,
 }
@@ -79,6 +122,8 @@ async fn get_confirmed_subscribers(
 
 #[derive(thiserror::Error)]
 pub enum PublishError {
+    #[error("Authentication failed.")]
+    AuthError(#[source] anyhow::Error),
     #[error(transparent)]
     UnexpectedError(#[from] anyhow::Error),
 }
@@ -94,6 +139,7 @@ impl ResponseError for PublishError {
     fn status_code(&self) -> StatusCode {
         match self {
             PublishError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            PublishError::AuthError(_) => StatusCode::UNAUTHORIZED,
         }
     }
 }

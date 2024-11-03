@@ -132,3 +132,26 @@ async fn create_confirmed_subscriber(app: &TestApp) {
     .error_for_status()
     .unwrap();
 }
+
+#[tokio::test]
+async fn requests_missing_authorization_are_rejected(){
+    let app = spawn_app().await;
+    let body=serde_json::json!(
+        {
+            "title": "Newsletter title",
+            "content": {
+                "text": "Newsletter body as plain text",
+                "html": "<p>Newsletter body as HTML</p>",
+            }
+        }
+    );
+    
+    let resp = reqwest::Client::new()
+    .post(&format!("{}/newsletters", app.address))
+    .json(&body)
+    .send()
+    .await
+    .unwrap();
+
+    assert_eq!(resp.status().as_u16(), 400);
+}
