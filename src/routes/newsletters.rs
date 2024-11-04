@@ -3,8 +3,8 @@ use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, Respons
 use anyhow::Context;
 use base64::STANDARD;
 use reqwest::{header::HeaderValue, StatusCode};
-use secrecy::Secret;
-use sqlx::{prelude::FromRow, Pool, Postgres, Transaction};
+use secrecy::{ExposeSecret, Secret};
+use sqlx::{Pool, Postgres, Transaction};
 
 #[derive(serde::Deserialize)]
 pub struct BodyData {
@@ -17,6 +17,11 @@ pub struct BodyContext {
     text: String,
 }
 
+#[tracing::instrument(
+    name = "Publish a newsletter issue",
+    skip(body, pool, email_client, req),
+    fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
+)]
 pub async fn publish_newsletter(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
@@ -24,6 +29,9 @@ pub async fn publish_newsletter(
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
     let creditials = basic_authentication(req.headers()).map_err(|e| PublishError::AuthError(e))?;
+    let user_id =validate_credentials(&creditials,&pool).await?;
+    // 记录谁在调用 POST /newsletters
+    tracing::span::Span::current().record("username",&tracing::field::display(&creditials.username));
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     let subscribers = get_confirmed_subscribers(&mut tx).await?;
@@ -90,6 +98,33 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
         username: username.to_string(),
         password: Secret::new(pwd.to_string()),
     })
+}
+
+// 验证用户身份必须存在于数据库中，且密码正确。
+async fn validate_credentials(
+    credentials: &Credentials,
+    pool: &Pool<Postgres>,
+) -> Result<uuid::Uuid, PublishError> {
+    let user_id = sqlx::query_as::<_, (uuid::Uuid,)>(
+        r#"
+        select user_id
+        from users
+        where username=$1 and password=$2;
+        "#,
+    )
+    .bind(&credentials.username.clone())
+    .bind(&credentials.password.expose_secret())
+    .fetch_optional(pool)
+    .await
+    .context("Failed to perform a query to validate auth credentials.")
+    .map_err(PublishError::UnexpectedError)?;
+
+    let user_id = user_id
+        .map(|r| r.0)
+        .ok_or_else(|| anyhow::anyhow!("Invalid credentials."))
+        .map_err(PublishError::AuthError)?;
+
+    Ok(user_id)
 }
 
 struct ConfirmedSubscriber {

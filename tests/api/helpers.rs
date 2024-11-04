@@ -36,9 +36,10 @@ impl TestApp {
     }
 
     pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
+        let (username, password) = self.test_user().await;
         reqwest::Client::new()
             .post(&format!("{}/newsletters", &self.address))
-            .basic_auth(Uuid::new_v4().to_string(), Some(Uuid::new_v4().to_string()))
+            .basic_auth(username, Some(password))
             .json(&body)
             .send()
             .await
@@ -68,6 +69,15 @@ impl TestApp {
             html_link,
             text_link,
         }
+    }
+
+    pub async fn test_user(&self) -> (String, String) {
+        let row =
+            sqlx::query_as::<_, (String, String)>("SELECT username, password FROM users LIMIT 1")
+                .fetch_one(&self.db_conn_pool)
+                .await
+                .expect("Failed to create test users.");
+        (row.0, row.1)
     }
 }
 
@@ -100,10 +110,29 @@ pub async fn spawn_app() -> TestApp {
     );
     tokio::spawn(server.run_until_stopped());
 
-    TestApp {
+    let app=TestApp {
         address: address,
         port: config.app.port,
         db_conn_pool: startup::get_conn_pool(&config.db),
         email_server: email_server,
-    }
+    };
+
+    add_test_user(&app.db_conn_pool).await;
+
+    app
+}
+
+async fn add_test_user(pool: &Pool<Postgres>) {
+    sqlx::query(
+        r#"
+        INSERT INTO users (user_id, username, password)
+        VALUES ($1, $2, $3)
+        "#,
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(uuid::Uuid::new_v4().to_string())
+    .execute(pool)
+    .await
+    .expect("Failed to create test user");
 }

@@ -21,7 +21,8 @@ sqlx = { version = "0.8",default-features = false,features = [
     "runtime-tokio-native-tls",
     "macros",
     "migrate",
-    "chrono"
+    "chrono",
+    "uuid"
 ] }
 # tracing
 tracing = { version = "0.1", features = ["log"] }
