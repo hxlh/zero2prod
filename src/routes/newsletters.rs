@@ -1,6 +1,7 @@
 use crate::{domain::SubscriberEmail, email_client, routes::error_chain_fmt};
 use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::STANDARD;
 use reqwest::{header::HeaderValue, StatusCode};
 use secrecy::{ExposeSecret, Secret};
@@ -29,9 +30,10 @@ pub async fn publish_newsletter(
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
     let creditials = basic_authentication(req.headers()).map_err(|e| PublishError::AuthError(e))?;
-    let user_id =validate_credentials(&creditials,&pool).await?;
+    let user_id = validate_credentials(&creditials, &pool).await?;
     // 记录谁在调用 POST /newsletters
-    tracing::span::Span::current().record("username",&tracing::field::display(&creditials.username));
+    tracing::span::Span::current()
+        .record("username", &tracing::field::display(&creditials.username));
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     let subscribers = get_confirmed_subscribers(&mut tx).await?;
@@ -105,26 +107,45 @@ async fn validate_credentials(
     credentials: &Credentials,
     pool: &Pool<Postgres>,
 ) -> Result<uuid::Uuid, PublishError> {
-    let user_id = sqlx::query_as::<_, (uuid::Uuid,)>(
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        user_id: uuid::Uuid,
+        password_hash: String,
+    }
+
+    let row: Row = sqlx::query_as(
         r#"
-        select user_id
+        select 
+        user_id,password_hash
         from users
-        where username=$1 and password=$2;
+        where username=$1;
         "#,
     )
     .bind(&credentials.username.clone())
-    .bind(&credentials.password.expose_secret())
     .fetch_optional(pool)
     .await
     .context("Failed to perform a query to validate auth credentials.")
-    .map_err(PublishError::UnexpectedError)?;
+    .map_err(PublishError::UnexpectedError)?
+    .ok_or(PublishError::AuthError(anyhow::anyhow!(
+        "Unknown username."
+    )))?;
 
-    let user_id = user_id
-        .map(|r| r.0)
-        .ok_or_else(|| anyhow::anyhow!("Invalid credentials."))
-        .map_err(PublishError::AuthError)?;
+    // PHC 字符串格式：
+    // # ${algorithm}${algorithm version}${$-separated algorithm parameters}${hash}${salt}
+    let expect_pwd_hash = PasswordHash::new(&row.password_hash)
+        .context("Failed to parse hash in PHC string format.")
+        .map_err(|e| PublishError::UnexpectedError(e))?;
 
-    Ok(user_id)
+    // 通过PasswordHash自动推断所需参数
+    Argon2::default()
+        .verify_password(
+            &credentials.password.expose_secret().as_bytes(),
+            &expect_pwd_hash,
+        )
+        .context("Invalid password.")
+        .map_err(|e| PublishError::AuthError(e))?;
+
+    Ok(row.user_id)
 }
 
 struct ConfirmedSubscriber {

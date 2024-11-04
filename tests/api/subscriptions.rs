@@ -1,4 +1,4 @@
-use sqlx::{FromRow, Row};
+use sqlx::{FromRow};
 use wiremock::{
     matchers::{self, method, path},
     Mock, ResponseTemplate,

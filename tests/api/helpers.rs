@@ -1,4 +1,6 @@
+use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use once_cell::sync::Lazy;
+use rand::thread_rng;
 use sqlx::{Pool, Postgres};
 use uuid::Uuid;
 use wiremock::MockServer;
@@ -22,63 +24,7 @@ pub struct TestApp {
     pub port: u16,
     pub db_conn_pool: Pool<Postgres>,
     pub email_server: MockServer,
-}
-
-impl TestApp {
-    pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
-        reqwest::Client::new()
-            .post(&format!("{}/subscriptions", &self.address))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(body)
-            .send()
-            .await
-            .expect("Failed to execute request.")
-    }
-
-    pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
-        let (username, password) = self.test_user().await;
-        reqwest::Client::new()
-            .post(&format!("{}/newsletters", &self.address))
-            .basic_auth(username, Some(password))
-            .json(&body)
-            .send()
-            .await
-            .expect("Failed to execute request.")
-    }
-
-    pub fn get_confirm_links_from_req(&self, req: &wiremock::Request) -> ConfirmationLinks {
-        let body: serde_json::Value = req.body_json().unwrap();
-        let get_links = |text: &str| {
-            let links: Vec<_> = linkify::LinkFinder::new()
-                .links(text)
-                .filter(|l| *l.kind() == linkify::LinkKind::Url)
-                .collect();
-            assert_eq!(links.len(), 1);
-            let raw_link = links[0].as_str().to_owned();
-            let mut confirmation_link = reqwest::Url::parse(&raw_link).unwrap();
-            // 确保我们没有调用随机的网络 API
-            assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
-            confirmation_link.set_port(Some(self.port)).unwrap();
-            confirmation_link
-        };
-
-        let html_link = get_links(&body["HtmlBody"].as_str().unwrap());
-        let text_link = get_links(&body["TextBody"].as_str().unwrap());
-
-        ConfirmationLinks {
-            html_link,
-            text_link,
-        }
-    }
-
-    pub async fn test_user(&self) -> (String, String) {
-        let row =
-            sqlx::query_as::<_, (String, String)>("SELECT username, password FROM users LIMIT 1")
-                .fetch_one(&self.db_conn_pool)
-                .await
-                .expect("Failed to create test users.");
-        (row.0, row.1)
-    }
+    pub test_user: TestUser,
 }
 
 pub async fn spawn_app() -> TestApp {
@@ -110,29 +56,102 @@ pub async fn spawn_app() -> TestApp {
     );
     tokio::spawn(server.run_until_stopped());
 
-    let app=TestApp {
+    let app = TestApp {
         address: address,
         port: config.app.port,
         db_conn_pool: startup::get_conn_pool(&config.db),
         email_server: email_server,
+        test_user: TestUser::generate(),
     };
 
-    add_test_user(&app.db_conn_pool).await;
-
+    app.test_user.store(&app.db_conn_pool).await;
     app
 }
 
-async fn add_test_user(pool: &Pool<Postgres>) {
-    sqlx::query(
-        r#"
-        INSERT INTO users (user_id, username, password)
-        VALUES ($1, $2, $3)
-        "#,
-    )
-    .bind(uuid::Uuid::new_v4())
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(uuid::Uuid::new_v4().to_string())
-    .execute(pool)
-    .await
-    .expect("Failed to create test user");
+pub struct TestUser {
+    pub user_id: Uuid,
+    pub username: String,
+    pub password: String,
 }
+
+impl TestUser {
+    pub fn generate() -> Self {
+        Self {
+            user_id: Uuid::new_v4(),
+            username: Uuid::new_v4().to_string(),
+            password: Uuid::new_v4().to_string(),
+        }
+    }
+
+    async fn store(&self, pool: &Pool<Postgres>) {
+        //  我们在这里不关心确切的 Argon2 参数，因为它是用于测试目的的！
+        let salt=SaltString::generate(&mut thread_rng());
+        
+        let pwd_hash=Argon2::default()
+        .hash_password(&self.password.as_bytes(), &salt)
+        .unwrap()
+        .to_string();
+
+        sqlx::query(
+            "INSERT INTO users (user_id, username, password_hash)
+            VALUES ($1, $2, $3)",
+        )
+        .bind(&self.user_id)
+        .bind(&self.username)
+        .bind(&pwd_hash)
+        .execute(pool)
+        .await
+        .expect("Failed to store test user.");
+    }
+}
+
+impl TestApp {
+    pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(&format!("{}/subscriptions", &self.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+    }
+
+    pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(&format!("{}/newsletters", &self.address))
+            .basic_auth(&self.test_user.username, Some(&self.test_user.password))
+            .json(&body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+    }
+
+    pub fn get_confirm_links_from_req(&self, req: &wiremock::Request) -> ConfirmationLinks {
+        let body: serde_json::Value = req.body_json().unwrap();
+        let get_links = |text: &str| {
+            let links: Vec<_> = linkify::LinkFinder::new()
+                .links(text)
+                .filter(|l| *l.kind() == linkify::LinkKind::Url)
+                .collect();
+            assert_eq!(links.len(), 1);
+            let raw_link = links[0].as_str().to_owned();
+            let mut confirmation_link = reqwest::Url::parse(&raw_link).unwrap();
+            // 确保我们没有调用随机的网络 API
+            assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+            confirmation_link.set_port(Some(self.port)).unwrap();
+            confirmation_link
+        };
+
+        let html_link = get_links(&body["HtmlBody"].as_str().unwrap());
+        let text_link = get_links(&body["TextBody"].as_str().unwrap());
+
+        ConfirmationLinks {
+            html_link,
+            text_link,
+        }
+    }
+
+
+}
+
+

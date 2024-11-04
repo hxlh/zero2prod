@@ -7,7 +7,7 @@ use actix_web::{web, HttpResponse, ResponseError};
 use anyhow::Context;
 use chrono::Utc;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
-use sqlx::{Pool, Postgres, Row, Transaction};
+use sqlx::{Pool, Postgres, Transaction};
 
 #[derive(serde::Deserialize)]
 pub struct SubscriptionsData {
