@@ -102,11 +102,55 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
     })
 }
 
+#[tracing::instrument(name = "Validate credentials", skip(credentials, pool))]
 // 验证用户身份必须存在于数据库中，且密码正确。
 async fn validate_credentials(
     credentials: &Credentials,
     pool: &Pool<Postgres>,
 ) -> Result<uuid::Uuid, PublishError> {
+    let (user_id, expect_pwd) = get_stored_credentials(pool, &credentials.username).await?;
+
+    // PHC 字符串格式：
+    // # ${algorithm}${algorithm version}${$-separated algorithm parameters}${hash}${salt}
+    let pwd = credentials.password.to_owned();
+
+    let curr_span = tracing::span::Span::current();
+    tokio::task::spawn_blocking(move || {
+        curr_span.in_scope(|| verify_password_hash(expect_pwd, pwd))
+    })
+    .await
+    .context("Failed to spawn blocking task.")
+    .map_err(PublishError::UnexpectedError)??;
+
+    Ok(user_id)
+}
+
+#[tracing::instrument(
+    name = "Verify password hash",
+    skip(expected_password_hash, password_candidate)
+)]
+fn verify_password_hash(
+    expected_password_hash: Secret<String>, //  现在拥有所有权
+    password_candidate: Secret<String>,
+) -> Result<(), PublishError> {
+    let expected_password_hash = PasswordHash::new(expected_password_hash.expose_secret())
+        .context("Failed to parse hash in PHC string format.")
+        .map_err(PublishError::UnexpectedError)?;
+
+    Argon2::default()
+        .verify_password(
+            password_candidate.expose_secret().as_bytes(),
+            &expected_password_hash,
+        )
+        .context("Invalid password.")
+        .map_err(PublishError::AuthError)
+}
+
+#[tracing::instrument(name = "Get stored credentials", skip(username, pool))]
+async fn get_stored_credentials(
+    pool: &Pool<Postgres>,
+    username: &str,
+) -> Result<(uuid::Uuid, Secret<String>), PublishError> {
     #[derive(sqlx::FromRow)]
     struct Row {
         user_id: uuid::Uuid,
@@ -121,7 +165,7 @@ async fn validate_credentials(
         where username=$1;
         "#,
     )
-    .bind(&credentials.username.clone())
+    .bind(username)
     .fetch_optional(pool)
     .await
     .context("Failed to perform a query to validate auth credentials.")
@@ -130,22 +174,7 @@ async fn validate_credentials(
         "Unknown username."
     )))?;
 
-    // PHC 字符串格式：
-    // # ${algorithm}${algorithm version}${$-separated algorithm parameters}${hash}${salt}
-    let expect_pwd_hash = PasswordHash::new(&row.password_hash)
-        .context("Failed to parse hash in PHC string format.")
-        .map_err(|e| PublishError::UnexpectedError(e))?;
-
-    // 通过PasswordHash自动推断所需参数
-    Argon2::default()
-        .verify_password(
-            &credentials.password.expose_secret().as_bytes(),
-            &expect_pwd_hash,
-        )
-        .context("Invalid password.")
-        .map_err(|e| PublishError::AuthError(e))?;
-
-    Ok(row.user_id)
+    Ok((row.user_id, Secret::new(row.password_hash)))
 }
 
 struct ConfirmedSubscriber {
