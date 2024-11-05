@@ -108,7 +108,17 @@ async fn validate_credentials(
     credentials: &Credentials,
     pool: &Pool<Postgres>,
 ) -> Result<uuid::Uuid, PublishError> {
-    let (user_id, expect_pwd) = get_stored_credentials(pool, &credentials.username).await?;
+    let userinfo = get_stored_credentials(pool, &credentials.username).await?;
+
+    let expect_pwd = match &userinfo {
+        Some(v) => v.1.to_owned(),
+        None => Secret::new(
+            "$argon2id$v=19$m=15000,t=2,p=1$\
+        gZiV/M1gPc22ElAH/Jh1Hw$\
+        CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno"
+                .to_owned(),
+        ),
+    };
 
     // PHC 字符串格式：
     // # ${algorithm}${algorithm version}${$-separated algorithm parameters}${hash}${salt}
@@ -122,7 +132,7 @@ async fn validate_credentials(
     .context("Failed to spawn blocking task.")
     .map_err(PublishError::UnexpectedError)??;
 
-    Ok(user_id)
+    Ok(userinfo.unwrap().0)
 }
 
 #[tracing::instrument(
@@ -150,14 +160,14 @@ fn verify_password_hash(
 async fn get_stored_credentials(
     pool: &Pool<Postgres>,
     username: &str,
-) -> Result<(uuid::Uuid, Secret<String>), PublishError> {
+) -> Result<Option<(uuid::Uuid, Secret<String>)>, PublishError> {
     #[derive(sqlx::FromRow)]
     struct Row {
         user_id: uuid::Uuid,
         password_hash: String,
     }
 
-    let row: Row = sqlx::query_as(
+    let row: Option<Row> = sqlx::query_as(
         r#"
         select 
         user_id,password_hash
@@ -168,13 +178,10 @@ async fn get_stored_credentials(
     .bind(username)
     .fetch_optional(pool)
     .await
-    .context("Failed to perform a query to validate auth credentials.")
-    .map_err(PublishError::UnexpectedError)?
-    .ok_or(PublishError::AuthError(anyhow::anyhow!(
-        "Unknown username."
-    )))?;
+    .context("Failed to query user credentials from database.")
+    .map_err(PublishError::UnexpectedError)?;
 
-    Ok((row.user_id, Secret::new(row.password_hash)))
+    Ok(row.map(|v| (v.user_id, Secret::new(v.password_hash))))
 }
 
 struct ConfirmedSubscriber {
