@@ -1,4 +1,8 @@
-use actix_web::{dev::Server, web, App, HttpServer};
+use actix_web::{
+    dev::Server,
+    web::{self, to},
+    App, HttpServer,
+};
 use sqlx::{Connection, PgConnection, Pool, Postgres};
 use std::{net::TcpListener, time::Duration};
 
@@ -31,12 +35,7 @@ impl Application {
         let port = listener.local_addr().unwrap().port();
         settings.app.port = port;
 
-        let server=run(
-            listener, 
-            pool, 
-            email_client,
-            settings.app.base_url.clone(),
-            )?;
+        let server = run(listener, pool, email_client, settings.app.base_url.clone())?;
         Ok(Self {
             settings: settings,
             server: server,
@@ -61,11 +60,23 @@ async fn config_database(settings: &DatabaseSettings) -> Pool<Postgres> {
         .await
         .expect("Failed to connect to database");
 
-    // 创建数据库
-    sqlx::query(&format!(r#"CREATE DATABASE "{}";"#, settings.dbname))
+    let database_exists = sqlx::query("SELECT 1 FROM pg_database WHERE datname = $1")
+        .bind(&settings.dbname)
+        .fetch_one(&mut conn)
+        .await
+        .is_ok();
+
+    // 如果数据库不存在，则创建
+    if !database_exists {
+        // 创建数据库
+        sqlx::query(&format!(
+            r#"CREATE DATABASE IF NOT EXISTS "{}";"#,
+            settings.dbname
+        ))
         .execute(&mut conn)
         .await
         .expect("Failed to create database");
+    }
 
     let pool = Pool::connect_with(settings.with_db())
         .await
@@ -95,8 +106,10 @@ pub fn run(
             .route("/health_check", web::get().to(routes::health_check))
             .route("/subscriptions", web::post().to(routes::subscriptions))
             .route("/subscriptions/confirm", web::get().to(routes::confirm))
-            .route("/newsletters",web::post().to(routes::publish_newsletter))
-            .route("/",web::get().to(routes::home))
+            .route("/newsletters", web::post().to(routes::publish_newsletter))
+            .route("/", web::get().to(routes::home))
+            .route("/login_form", web::get().to(routes::login_from))
+            .route("/login",web::post().to(routes::login))
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(web::Data::new(base_url.clone()))
