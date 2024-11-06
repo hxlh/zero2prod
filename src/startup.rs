@@ -96,6 +96,7 @@ pub fn run(
             .route("/subscriptions", web::post().to(routes::subscriptions))
             .route("/subscriptions/confirm", web::get().to(routes::confirm))
             .route("/newsletters",web::post().to(routes::publish_newsletter))
+            .route("/",web::get().to(routes::home))
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(web::Data::new(base_url.clone()))

@@ -30,7 +30,7 @@ pub async fn publish_newsletter(
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
     let creditials = basic_authentication(req.headers()).map_err(|e| PublishError::AuthError(e))?;
-    let user_id = validate_credentials(&creditials, &pool).await?;
+    let _user_id = validate_credentials(&creditials, &pool).await?;
     // 记录谁在调用 POST /newsletters
     tracing::span::Span::current()
         .record("username", &tracing::field::display(&creditials.username));
