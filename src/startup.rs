@@ -1,6 +1,6 @@
 use actix_web::{
     dev::Server,
-    web::{self, to},
+    web::{self},
     App, HttpServer,
 };
 use sqlx::{Connection, PgConnection, Pool, Postgres};
@@ -70,7 +70,7 @@ async fn config_database(settings: &DatabaseSettings) -> Pool<Postgres> {
     if !database_exists {
         // 创建数据库
         sqlx::query(&format!(
-            r#"CREATE DATABASE IF NOT EXISTS "{}";"#,
+            r#"CREATE DATABASE "{}";"#,
             settings.dbname
         ))
         .execute(&mut conn)

@@ -1,10 +1,9 @@
-use crate::{domain::SubscriberEmail, email_client, routes::error_chain_fmt};
+use crate::{authentication::{self, validate_credentials, Credentials}, domain::SubscriberEmail, email_client, routes::error_chain_fmt};
 use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::STANDARD;
 use reqwest::{header::HeaderValue, StatusCode};
-use secrecy::{ExposeSecret, Secret};
+use secrecy::Secret;
 use sqlx::{Pool, Postgres, Transaction};
 
 #[derive(serde::Deserialize)]
@@ -30,7 +29,15 @@ pub async fn publish_newsletter(
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
     let creditials = basic_authentication(req.headers()).map_err(|e| PublishError::AuthError(e))?;
-    let _user_id = validate_credentials(&creditials, &pool).await?;
+    let _user_id = validate_credentials(&creditials, &pool)
+        .await
+        .map_err(|e| match e {
+            authentication::AuthError::InvalidCredentials(_) => PublishError::AuthError(e.into()),
+            authentication::AuthError::UnexpectedError(_) => {
+                PublishError::UnexpectedError(e.into())
+            }
+        })?;
+
     // 记录谁在调用 POST /newsletters
     tracing::span::Span::current()
         .record("username", &tracing::field::display(&creditials.username));
@@ -66,11 +73,6 @@ pub async fn publish_newsletter(
     Ok(HttpResponse::Ok().finish())
 }
 
-struct Credentials {
-    username: String,
-    password: Secret<String>,
-}
-
 fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
     let auth = headers
         .get("Authorization")
@@ -100,88 +102,6 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
         username: username.to_string(),
         password: Secret::new(pwd.to_string()),
     })
-}
-
-#[tracing::instrument(name = "Validate credentials", skip(credentials, pool))]
-// 验证用户身份必须存在于数据库中，且密码正确。
-async fn validate_credentials(
-    credentials: &Credentials,
-    pool: &Pool<Postgres>,
-) -> Result<uuid::Uuid, PublishError> {
-    let userinfo = get_stored_credentials(pool, &credentials.username).await?;
-
-    let expect_pwd = match &userinfo {
-        Some(v) => v.1.to_owned(),
-        None => Secret::new(
-            "$argon2id$v=19$m=15000,t=2,p=1$\
-        gZiV/M1gPc22ElAH/Jh1Hw$\
-        CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno"
-                .to_owned(),
-        ),
-    };
-
-    // PHC 字符串格式：
-    // # ${algorithm}${algorithm version}${$-separated algorithm parameters}${hash}${salt}
-    let pwd = credentials.password.to_owned();
-
-    let curr_span = tracing::span::Span::current();
-    tokio::task::spawn_blocking(move || {
-        curr_span.in_scope(|| verify_password_hash(expect_pwd, pwd))
-    })
-    .await
-    .context("Failed to spawn blocking task.")
-    .map_err(PublishError::UnexpectedError)??;
-
-    Ok(userinfo.unwrap().0)
-}
-
-#[tracing::instrument(
-    name = "Verify password hash",
-    skip(expected_password_hash, password_candidate)
-)]
-fn verify_password_hash(
-    expected_password_hash: Secret<String>, //  现在拥有所有权
-    password_candidate: Secret<String>,
-) -> Result<(), PublishError> {
-    let expected_password_hash = PasswordHash::new(expected_password_hash.expose_secret())
-        .context("Failed to parse hash in PHC string format.")
-        .map_err(PublishError::UnexpectedError)?;
-
-    Argon2::default()
-        .verify_password(
-            password_candidate.expose_secret().as_bytes(),
-            &expected_password_hash,
-        )
-        .context("Invalid password.")
-        .map_err(PublishError::AuthError)
-}
-
-#[tracing::instrument(name = "Get stored credentials", skip(username, pool))]
-async fn get_stored_credentials(
-    pool: &Pool<Postgres>,
-    username: &str,
-) -> Result<Option<(uuid::Uuid, Secret<String>)>, PublishError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        user_id: uuid::Uuid,
-        password_hash: String,
-    }
-
-    let row: Option<Row> = sqlx::query_as(
-        r#"
-        select 
-        user_id,password_hash
-        from users
-        where username=$1;
-        "#,
-    )
-    .bind(username)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to query user credentials from database.")
-    .map_err(PublishError::UnexpectedError)?;
-
-    Ok(row.map(|v| (v.user_id, Secret::new(v.password_hash))))
 }
 
 struct ConfirmedSubscriber {
