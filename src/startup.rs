@@ -108,7 +108,7 @@ pub fn run(
             .route("/subscriptions/confirm", web::get().to(routes::confirm))
             .route("/newsletters", web::post().to(routes::publish_newsletter))
             .route("/", web::get().to(routes::home))
-            .route("/login_form", web::get().to(routes::login_from))
+            .route("/login", web::get().to(routes::login_from))
             .route("/login",web::post().to(routes::login))
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())

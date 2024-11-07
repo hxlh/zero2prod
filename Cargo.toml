@@ -51,7 +51,8 @@ anyhow = "1"
 base64 = "0.13"
 # 开放 Web 应用程序安全项目
 argon2 = { version = "0.5.3", features = ["std"] }
-
+urlencoding = "2"
+htmlescape = "0.3"
 [dev-dependencies]
 # 更清晰的断言
 claim = "0.5.0"
