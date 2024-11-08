@@ -3,6 +3,7 @@ use actix_web::{
     web::{self},
     App, HttpServer,
 };
+use secrecy::Secret;
 use sqlx::{Connection, PgConnection, Pool, Postgres};
 use std::{net::TcpListener, time::Duration};
 
@@ -35,7 +36,13 @@ impl Application {
         let port = listener.local_addr().unwrap().port();
         settings.app.port = port;
 
-        let server = run(listener, pool, email_client, settings.app.base_url.clone())?;
+        let server = run(
+            listener,
+            pool,
+            email_client,
+            settings.app.base_url.clone(),
+            settings.app.hmac_secret.clone(),
+        )?;
         Ok(Self {
             settings: settings,
             server: server,
@@ -69,13 +76,10 @@ async fn config_database(settings: &DatabaseSettings) -> Pool<Postgres> {
     // 如果数据库不存在，则创建
     if !database_exists {
         // 创建数据库
-        sqlx::query(&format!(
-            r#"CREATE DATABASE "{}";"#,
-            settings.dbname
-        ))
-        .execute(&mut conn)
-        .await
-        .expect("Failed to create database");
+        sqlx::query(&format!(r#"CREATE DATABASE "{}";"#, settings.dbname))
+            .execute(&mut conn)
+            .await
+            .expect("Failed to create database");
     }
 
     let pool = Pool::connect_with(settings.with_db())
@@ -95,6 +99,7 @@ pub fn run(
     db_conn_pool: Pool<Postgres>,
     email_client: EmailClient,
     base_url: String,
+    hmac_secret: Secret<String>,
 ) -> Result<Server, std::io::Error> {
     // 用智能指针包装连接
     let db_conn_pool = web::Data::new(db_conn_pool);
@@ -109,10 +114,11 @@ pub fn run(
             .route("/newsletters", web::post().to(routes::publish_newsletter))
             .route("/", web::get().to(routes::home))
             .route("/login", web::get().to(routes::login_from))
-            .route("/login",web::post().to(routes::login))
+            .route("/login", web::post().to(routes::login))
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(web::Data::new(base_url.clone()))
+            .app_data(web::Data::new(hmac_secret.clone()))
     })
     .listen(listener)?
     .run();
