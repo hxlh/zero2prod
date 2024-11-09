@@ -39,15 +39,13 @@ async fn confirm_subscriber(pool: &PgPool, subscriber_id: i64) -> Result<(), sql
     )
     .bind(subscriber_id)
     .execute(pool)
-    .await
-    .map_err(|e| e)?;
+    .await?;
 
     Ok(())
 }
 
 #[tracing::instrument(name = "Get subscriber ID by token", skip(pool, token))]
 async fn get_subscriber_id_by_token(pool: &PgPool, token: &str) -> Result<i64, sqlx::Error> {
-    
     let subscriber_id: (i64,) = sqlx::query_as(
         r#"
             select subscriber_id 

@@ -29,18 +29,25 @@ pub struct DatabaseSettings {
 
 impl DatabaseSettings {
     pub fn connection_string(&self) -> Secret<String> {
-        Secret::new(format!("postgres://{}:{}@{}:{}/{}",self.user,self.password.expose_secret(),self.host,self.port,self.dbname))
+        Secret::new(format!(
+            "postgres://{}:{}@{}:{}/{}",
+            self.user,
+            self.password.expose_secret(),
+            self.host,
+            self.port,
+            self.dbname
+        ))
     }
 
-    pub fn without_db(&self) -> PgConnectOptions{
+    pub fn without_db(&self) -> PgConnectOptions {
         PgConnectOptions::new()
-        .username(&self.user)
-        .password(self.password.expose_secret())
-        .host(&self.host)
-        .port(self.port)
+            .username(&self.user)
+            .password(self.password.expose_secret())
+            .host(&self.host)
+            .port(self.port)
     }
 
-    pub fn with_db(&self) -> PgConnectOptions{
+    pub fn with_db(&self) -> PgConnectOptions {
         self.without_db().database(&self.dbname)
     }
 }

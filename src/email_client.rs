@@ -4,10 +4,9 @@ use reqwest::Client;
 
 use crate::domain::SubscriberEmail;
 
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct SendEmailRequest<'a>{
+struct SendEmailRequest<'a> {
     from: &'a str,
     to: &'a str,
     subject: &'a str,
@@ -43,12 +42,11 @@ impl EmailClient {
         let request_body = SendEmailRequest {
             from: self.sender.as_ref(),
             to: recipient.as_ref(),
-            subject: subject,
+            subject,
             html_body: html_content,
             text_body: content,
         };
-        self
-            .http_client
+        self.http_client
             .post(&url)
             .json(&request_body)
             .send()

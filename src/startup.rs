@@ -43,10 +43,7 @@ impl Application {
             settings.app.base_url.clone(),
             settings.app.hmac_secret.clone(),
         )?;
-        Ok(Self {
-            settings: settings,
-            server: server,
-        })
+        Ok(Self { settings, server })
     }
 
     pub async fn run_until_stopped(self) -> Result<(), std::io::Error> {

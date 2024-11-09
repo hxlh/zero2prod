@@ -25,6 +25,7 @@ pub struct TestApp {
     pub db_conn_pool: Pool<Postgres>,
     pub email_server: MockServer,
     pub test_user: TestUser,
+    pub api_client: reqwest::Client,
 }
 
 pub async fn spawn_app() -> TestApp {
@@ -36,7 +37,7 @@ pub async fn spawn_app() -> TestApp {
     // configure database
     let config = {
         let mut c = get_config().expect("Failed to load configuration");
-        c.db.dbname = format!("test_{}", uuid::Uuid::new_v4().to_string());
+        c.db.dbname = format!("test_{}", uuid::Uuid::new_v4());
         c.app.port = 0;
         c.email.base_url = email_server.uri();
         c
@@ -56,12 +57,19 @@ pub async fn spawn_app() -> TestApp {
     );
     tokio::spawn(server.run_until_stopped());
 
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .cookie_store(true)
+        .build()
+        .unwrap();
+
     let app = TestApp {
-        address: address,
+        address,
         port: config.app.port,
         db_conn_pool: startup::get_conn_pool(&config.db),
-        email_server: email_server,
+        email_server,
         test_user: TestUser::generate(),
+        api_client: client,
     };
 
     app.test_user.store(&app.db_conn_pool).await;
@@ -92,7 +100,7 @@ impl TestUser {
             argon2::Version::V0x13,
             argon2::Params::new(15000, 2, 1, None).unwrap(),
         )
-        .hash_password(&self.password.as_bytes(), &salt)
+        .hash_password(self.password.as_bytes(), &salt)
         .unwrap()
         .to_string();
 
@@ -100,7 +108,7 @@ impl TestUser {
             "INSERT INTO users (user_id, username, password_hash)
             VALUES ($1, $2, $3)",
         )
-        .bind(&self.user_id)
+        .bind(self.user_id)
         .bind(&self.username)
         .bind(&pwd_hash)
         .execute(pool)
@@ -110,9 +118,36 @@ impl TestUser {
 }
 
 impl TestApp {
+    // 我们的测试将只关注 HTML 页面，因此
+    // 我们不暴露底层的 reqwest::Response
+    pub async fn get_login_html(&self) -> String {
+        self.api_client
+            .get(format!("{}/login", &self.address))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    }
+
+    pub async fn post_login<Body>(&self, body: &Body) -> reqwest::Response
+    where
+        Body: serde::Serialize,
+    {
+        self.api_client
+            .post(format!("{}/login", &self.address))
+            // 这个 `reqwest` 方法确保请求体被 URL 编码
+            // 并且 `Content-Type` 头部被相应地设置。
+            .form(body)
+            .send()
+            .await
+            .expect("执行请求失败。")
+    }
+
     pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
-        reqwest::Client::new()
-            .post(&format!("{}/subscriptions", &self.address))
+        self.api_client
+            .post(format!("{}/subscriptions", &self.address))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)
             .send()
@@ -121,8 +156,8 @@ impl TestApp {
     }
 
     pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
-        reqwest::Client::new()
-            .post(&format!("{}/newsletters", &self.address))
+        self.api_client
+            .post(format!("{}/newsletters", &self.address))
             .basic_auth(&self.test_user.username, Some(&self.test_user.password))
             .json(&body)
             .send()
@@ -146,12 +181,17 @@ impl TestApp {
             confirmation_link
         };
 
-        let html_link = get_links(&body["HtmlBody"].as_str().unwrap());
-        let text_link = get_links(&body["TextBody"].as_str().unwrap());
+        let html_link = get_links(body["HtmlBody"].as_str().unwrap());
+        let text_link = get_links(body["TextBody"].as_str().unwrap());
 
         ConfirmationLinks {
             html_link,
             text_link,
         }
     }
+}
+
+pub fn assert_is_redirect_to(response: &reqwest::Response, location: &str) {
+    assert_eq!(response.status().as_u16(), 303);
+    assert_eq!(response.headers().get("Location").unwrap(), location);
 }

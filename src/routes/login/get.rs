@@ -1,47 +1,14 @@
-use actix_web::{http::header::ContentType, web, HttpResponse};
-use hmac::Mac;
-use secrecy::{ExposeSecret, Secret};
+use actix_web::{cookie, http::header::ContentType, HttpRequest, HttpResponse};
 
-#[derive(serde::Deserialize)]
-pub struct QueryParams {
-    error: String,
-    tag: String,
-}
-impl QueryParams {
-    fn verify(&self, hmac_secret: &Secret<String>) -> Result<String, anyhow::Error> {
-        let tag = hex::decode(&self.tag)?;
-        let query_string = format!("error={}", urlencoding::Encoded::new(&self.error));
-        let mut mac =
-            hmac::Hmac::<sha2::Sha256>::new_from_slice(hmac_secret.expose_secret().as_bytes())?;
-
-        mac.update(query_string.as_bytes());
-        mac.verify_slice(&tag)?;
-        Ok(self.error.clone())
-    }
-}
-
-pub async fn login_from(
-    query: Option<web::Query<QueryParams>>,
-    hmac_secret: web::Data<Secret<String>>,
-) -> HttpResponse {
-    let error_html = match query {
-        None => "".into(),
-        Some(q) => match q.verify(&hmac_secret) {
-            Ok(error) => {
-                format!("<p><i>{}</i></p>", htmlescape::encode_minimal(&error))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error.message = %e,
-                    error.cause_chain = ?e,
-                    "Failed to verify query parameters using the HMAC tag"
-                );
-                "".into()
-            }
-        },
+pub async fn login_from(request: HttpRequest) -> HttpResponse {
+    let error_html: String = match request.cookie("_flash") {
+        Some(cookie) => {
+            format!(r#"<p><i>{}</i></p>"#, cookie.value())
+        }
+        None => "".to_string(),
     };
-    tracing::info!("================================{}", error_html);
-    HttpResponse::Ok()
+
+    let mut resp = HttpResponse::Ok()
         .content_type(ContentType::html())
         .body(format!(
             r#"<!DOCTYPE html>
@@ -71,5 +38,12 @@ pub async fn login_from(
     </form>
 </body>
 </html>"#,
-        ))
+        ));
+
+    if !error_html.is_empty() {
+        resp.add_removal_cookie(&cookie::Cookie::new("_flash", ""))
+            .unwrap();
+    }
+
+    resp
 }

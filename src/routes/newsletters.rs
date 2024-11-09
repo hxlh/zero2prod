@@ -1,4 +1,9 @@
-use crate::{authentication::{self, validate_credentials, Credentials}, domain::SubscriberEmail, email_client, routes::error_chain_fmt};
+use crate::{
+    authentication::{self, validate_credentials, Credentials},
+    domain::SubscriberEmail,
+    email_client,
+    routes::error_chain_fmt,
+};
 use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
 use base64::STANDARD;
@@ -28,7 +33,7 @@ pub async fn publish_newsletter(
     email_client: web::Data<email_client::EmailClient>,
     body: web::Json<BodyData>,
 ) -> Result<HttpResponse, PublishError> {
-    let creditials = basic_authentication(req.headers()).map_err(|e| PublishError::AuthError(e))?;
+    let creditials = basic_authentication(req.headers()).map_err(PublishError::AuthError)?;
     let _user_id = validate_credentials(&creditials, &pool)
         .await
         .map_err(|e| match e {
@@ -40,7 +45,7 @@ pub async fn publish_newsletter(
 
     // 记录谁在调用 POST /newsletters
     tracing::span::Span::current()
-        .record("username", &tracing::field::display(&creditials.username));
+        .record("username", tracing::field::display(&creditials.username));
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     let subscribers = get_confirmed_subscribers(&mut tx).await?;

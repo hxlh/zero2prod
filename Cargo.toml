@@ -13,8 +13,6 @@ name = "zero2prod"
 [dependencies]
 actix-web = "4"
 tokio = { version = "1", features = ["full"] }
-# http client
-reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 # database
 sqlx = { version = "0.8", default-features = false, features = [
@@ -58,6 +56,12 @@ hmac = { version = "0.12", features = ["std"] }
 sha2 = "0.10"
 hex = "0.4"
 
+# http client
+[dependencies.reqwest]
+version = "0.11"
+default-features = false
+features = ["json", "rustls-tls", "cookies"]
+
 [dev-dependencies]
 # 更清晰的断言
 claim = "0.5.0"
@@ -67,3 +71,5 @@ quickcheck_macros = "0.9.1"
 wiremock = "0.5"
 serde_json = "1.0"
 linkify = "0.8"
+
+

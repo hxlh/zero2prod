@@ -3,8 +3,7 @@ use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use secrecy::{ExposeSecret, Secret};
 use sqlx::{Pool, Postgres};
 
-
-#[derive(thiserror::Error,Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum AuthError {
     #[error("invalid credentials")]
     InvalidCredentials(#[source] anyhow::Error),

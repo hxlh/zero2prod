@@ -1,4 +1,3 @@
-
 use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
     email_client::EmailClient,
@@ -41,12 +40,9 @@ pub async fn subscriptions(
     let new_subscriber = form
         .0
         .try_into()
-        .map_err(|e| SubscribeError::ValidationError(e))?;
+        .map_err(SubscribeError::ValidationError)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .context("开启事务失败")?;
+    let mut tx = pool.begin().await.context("开启事务失败")?;
 
     // 保存订阅者信息
     let id = save_subscriber(&mut tx, &new_subscriber)
@@ -58,9 +54,7 @@ pub async fn subscriptions(
         .await
         .context("保存订阅token失败")?;
 
-    tx.commit()
-        .await
-        .context("提交事务失败")?;
+    tx.commit().await.context("提交事务失败")?;
 
     send_confirmation_email(
         email_client.as_ref(),
@@ -118,7 +112,7 @@ async fn save_subscriber(
     let subscriber_email = subscriber.email.as_ref();
     let subscriber_name = subscriber.name.as_ref();
 
-    let id:(i64,) = sqlx::query_as(
+    let id: (i64,) = sqlx::query_as(
         r#"
         INSERT INTO subscriptions (email, name, subscribed_at,status)
         Values ($1,$2,$3,'pending_confirmation')
@@ -130,10 +124,7 @@ async fn save_subscriber(
     .bind(Utc::now())
     .fetch_optional(&mut **tx)
     .await?
-    .ok_or(sqlx::Error::RowNotFound)
-    .map_err(|e| {
-        e
-    })?;
+    .ok_or(sqlx::Error::RowNotFound)?;
 
     Ok(id.0)
 }
@@ -157,9 +148,7 @@ async fn save_subscription_token(
     .bind(token)
     .execute(&mut **tx)
     .await
-    .map_err(|e| {
-        SaveTokenError(e)
-    })?;
+    .map_err(SaveTokenError)?;
 
     Ok(())
 }

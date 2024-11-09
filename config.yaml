@@ -2,7 +2,7 @@ app:
   host: 0.0.0.0
   port: 9999
   base_url: http://127.0.0.1
-  hmac_secret: 'test_secret'
+  hmac_secret: 'JlkXTiTlc507EJlkXTiTlc507ERzy2Ob4Xc4qXAPzJ7MiX6EB04c4%JlkXTiTlc507ERzy2Ob4Xc4qXAPzJ7MiX6EB04c4%Rzy2Ob4Xc4qXAPzJ7MiX6EB04c4%'
 db:
   user: postgres
   password: 'postgres'

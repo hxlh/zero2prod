@@ -1,7 +1,5 @@
-use actix_web::{error::InternalError, web, HttpResponse};
-use hmac::{Hmac, Mac};
-use reqwest::header::LOCATION;
-use secrecy::{ExposeSecret, Secret};
+use actix_web::{cookie::Cookie, error::InternalError, web, HttpResponse};
+use secrecy::Secret;
 use sqlx::{Pool, Postgres};
 
 use crate::{
@@ -29,14 +27,14 @@ pub async fn login(
         username: from.0.username,
         password: from.0.password,
     };
-    tracing::Span::current().record("username", &tracing::field::display(&credentials.username));
+    tracing::Span::current().record("username", tracing::field::display(&credentials.username));
 
     match validate_credentials(&credentials, &pool).await {
         Ok(user_id) => {
-            tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
+            tracing::Span::current().record("user_id", tracing::field::display(&user_id));
             // 重定向
             Ok(HttpResponse::SeeOther()
-                .insert_header((LOCATION, "/"))
+                .insert_header((reqwest::header::LOCATION, "/"))
                 .finish())
         }
         Err(e) => {
@@ -49,20 +47,22 @@ pub async fn login(
                 }
             };
 
-            let query_string = format!("error={}", urlencoding::Encoded::new(e.to_string()));
-            let hmac_tag = {
-                let mut mac =
-                    Hmac::<sha2::Sha256>::new_from_slice(secret.expose_secret().as_bytes())
-                        .unwrap();
-                mac.update(query_string.as_bytes());
-                mac.finalize().into_bytes()
-            };
+            // let query_string = format!("error={}", urlencoding::Encoded::new(e.to_string()));
+            // let _hmac_tag = {
+            //     let mut mac =
+            //         Hmac::<sha2::Sha256>::new_from_slice(secret.expose_secret().as_bytes())
+            //             .unwrap();
+            //     mac.update(query_string.as_bytes());
+            //     mac.finalize().into_bytes()
+            // };
 
             let response = HttpResponse::SeeOther()
                 .insert_header((
-                    LOCATION,
-                    format!("/login?{}&tag={:x}", query_string, hmac_tag),
+                    reqwest::header::LOCATION,
+                    // format!("/login?{}&tag={:x}", query_string, hmac_tag),
+                    "/login",
                 ))
+                .cookie(Cookie::new("_flash", e.to_string()))
                 .finish();
             Err(InternalError::from_response(e, response))
         }
