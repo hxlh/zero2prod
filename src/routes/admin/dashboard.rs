@@ -14,15 +14,17 @@ where
 
 pub async fn admin_dashboard(
     session: Session,
-    pool:web::Data<Pool<Postgres>>,
-) -> Result<HttpResponse, actix_web::Error>{
+    pool: web::Data<Pool<Postgres>>,
+) -> Result<HttpResponse, actix_web::Error> {
     let username = if let Some(user_id) = session.get::<Uuid>("user_id").map_err(e500)? {
-        get_name(&pool,&user_id).await
-        .map_err(e500)?
-    }else{
-        return Err(e500(anyhow::anyhow!("User not logged in")));
+        get_name(&pool, &user_id).await.map_err(e500)?
+    } else {
+        return Ok(HttpResponse::SeeOther()
+            .insert_header((reqwest::header::LOCATION, "/login"))
+            .finish());
+        // return Err(e500(anyhow::anyhow!("User not logged in")));
     };
- 
+
     Ok(HttpResponse::Ok()
         .content_type(ContentType::html())
         .body(format!(
@@ -39,8 +41,8 @@ pub async fn admin_dashboard(
         )))
 }
 
-async fn get_name(pool:&Pool<Postgres>,user_id: &Uuid) -> Result<String,anyhow::Error> {
-    let username=sqlx::query_as::<_, (String,)>(
+async fn get_name(pool: &Pool<Postgres>, user_id: &Uuid) -> Result<String, anyhow::Error> {
+    let username = sqlx::query_as::<_, (String,)>(
         r#"
     SELECT username
         FROM users

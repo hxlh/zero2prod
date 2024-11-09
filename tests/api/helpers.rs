@@ -1,6 +1,7 @@
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use once_cell::sync::Lazy;
 use rand::thread_rng;
+use reqwest::Response;
 use sqlx::{Pool, Postgres};
 use uuid::Uuid;
 use wiremock::MockServer;
@@ -86,6 +87,8 @@ impl TestUser {
     pub fn generate() -> Self {
         Self {
             user_id: Uuid::new_v4(),
+            // username: "admin".into(),
+            // password: "mypassword".into()
             username: Uuid::new_v4().to_string(),
             password: Uuid::new_v4().to_string(),
         }
@@ -103,7 +106,7 @@ impl TestUser {
         .hash_password(self.password.as_bytes(), &salt)
         .unwrap()
         .to_string();
-
+        
         sqlx::query(
             "INSERT INTO users (user_id, username, password_hash)
             VALUES ($1, $2, $3)",
@@ -118,7 +121,15 @@ impl TestUser {
 }
 
 impl TestApp {
-    pub async fn get_admin_dashboard(&self) -> String {
+    pub async fn get_admin_dashboard(&self) -> Response {
+        self.api_client
+            .get(format!("{}/admin/dashboard", &self.address))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    pub async fn get_admin_dashboard_html(&self) -> String {
         self.api_client
             .get(format!("{}/admin/dashboard", &self.address))
             .send()

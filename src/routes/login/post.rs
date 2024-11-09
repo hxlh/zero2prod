@@ -9,7 +9,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::{
     authentication::{validate_credentials, Credentials},
-    routes::{error_chain_fmt, PublishError},
+    routes::error_chain_fmt,
 };
 
 #[derive(serde::Deserialize)]
