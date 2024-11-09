@@ -1,6 +1,7 @@
 use actix_web::{cookie, http::header::ContentType, HttpRequest, HttpResponse};
 
 pub async fn login_from(request: HttpRequest) -> HttpResponse {
+    &dbg!(&request.cookies());
     let error_html: String = match request.cookie("_flash") {
         Some(cookie) => {
             format!(r#"<p><i>{}</i></p>"#, cookie.value())
