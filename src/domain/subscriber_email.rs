@@ -1,4 +1,4 @@
-use validator::validate_email;
+use validator::ValidateEmail;
 
 #[derive(Debug)]
 pub struct SubscriberEmail(String);
@@ -11,7 +11,7 @@ impl std::fmt::Display for SubscriberEmail {
 
 impl SubscriberEmail {
     pub fn parse(email: String) -> Result<Self, String> {
-        if !validate_email(&email) {
+        if !ValidateEmail::validate_email(&email) {
             return Err(format!("Invalid email format: {}", email));
         }
         Ok(Self(email.to_string()))

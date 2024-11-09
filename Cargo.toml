@@ -39,7 +39,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 # unicode字符处理
 unicode-segmentation = "1.9.0"
 # 验证器
-validator = "0.14"
+validator = { version = "0.18", features = ["derive"] }
 # 随机数生成
 rand = { version = "0.8", features = ["std_rng"] }
 # 错误处理
