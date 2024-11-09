@@ -1,10 +1,15 @@
-use actix_web::{cookie::Cookie, error::InternalError, web, HttpResponse};
+use actix_session::Session;
+use actix_web::{
+    cookie::{self, Cookie},
+    error::InternalError,
+    web, HttpResponse,
+};
 use secrecy::Secret;
 use sqlx::{Pool, Postgres};
 
 use crate::{
     authentication::{validate_credentials, Credentials},
-    routes::error_chain_fmt,
+    routes::{error_chain_fmt, PublishError},
 };
 
 #[derive(serde::Deserialize)]
@@ -15,13 +20,14 @@ pub struct FormData {
 
 #[tracing::instrument(
     name = "login",
-    skip(from),
+    skip(pool,from,secret,session),
     fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
 )]
 pub async fn login(
     pool: web::Data<Pool<Postgres>>,
     from: web::Form<FormData>,
     secret: web::Data<Secret<String>>,
+    session: Session,
 ) -> Result<HttpResponse, InternalError<LoginError>> {
     let credentials = Credentials {
         username: from.0.username,
@@ -33,8 +39,27 @@ pub async fn login(
         Ok(user_id) => {
             tracing::Span::current().record("user_id", tracing::field::display(&user_id));
             // 重定向
+            session.renew();
+            if let Err(e) = session.insert("user_id", user_id) {
+                let e = LoginError::UnexpectedError(e.into());
+
+                let mut flash_error = Cookie::new("_flash", e.to_string());
+                flash_error.set_expires(Some(
+                    cookie::time::OffsetDateTime::now_utc() + cookie::time::Duration::seconds(5),
+                ));
+
+                let response = HttpResponse::SeeOther()
+                    .insert_header((
+                        reqwest::header::LOCATION,
+                        // format!("/login?{}&tag={:x}", query_string, hmac_tag),
+                        "/login",
+                    ))
+                    .cookie(flash_error)
+                    .finish();
+                return Err(InternalError::from_response(e, response));
+            }
             Ok(HttpResponse::SeeOther()
-                .insert_header((reqwest::header::LOCATION, "/"))
+                .insert_header((reqwest::header::LOCATION, "/admin/dashboard"))
                 .finish())
         }
         Err(e) => {
@@ -55,6 +80,10 @@ pub async fn login(
             //     mac.update(query_string.as_bytes());
             //     mac.finalize().into_bytes()
             // };
+            let mut flash_error = Cookie::new("_flash", e.to_string());
+            flash_error.set_expires(Some(
+                cookie::time::OffsetDateTime::now_utc() + cookie::time::Duration::seconds(5),
+            ));
 
             let response = HttpResponse::SeeOther()
                 .insert_header((
@@ -62,12 +91,14 @@ pub async fn login(
                     // format!("/login?{}&tag={:x}", query_string, hmac_tag),
                     "/login",
                 ))
-                .cookie(Cookie::new("_flash", e.to_string()))
+                .cookie(flash_error)
                 .finish();
             Err(InternalError::from_response(e, response))
         }
     }
 }
+
+
 
 #[derive(thiserror::Error)]
 pub enum LoginError {

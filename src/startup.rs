@@ -1,9 +1,8 @@
+use actix_session::{storage::RedisSessionStore, SessionMiddleware};
 use actix_web::{
-    dev::Server,
-    web::{self},
-    App, HttpServer,
+    cookie::Key, dev::Server, web::{self}, App, HttpServer
 };
-use secrecy::Secret;
+use secrecy::{ExposeSecret, Secret};
 use sqlx::{Connection, PgConnection, Pool, Postgres};
 use std::{net::TcpListener, time::Duration};
 
@@ -19,7 +18,7 @@ pub struct Application {
 }
 
 impl Application {
-    pub async fn build(mut settings: Settings) -> Result<Self, std::io::Error> {
+    pub async fn build(mut settings: Settings) -> Result<Self, anyhow::Error> {
         let pool = config_database(&settings.db).await;
 
         let email_client = EmailClient::new(
@@ -42,7 +41,8 @@ impl Application {
             email_client,
             settings.app.base_url.clone(),
             settings.app.hmac_secret.clone(),
-        )?;
+            settings.redis_uri.clone(),
+        ).await?;
         Ok(Self { settings, server })
     }
 
@@ -91,20 +91,26 @@ async fn config_database(settings: &DatabaseSettings) -> Pool<Postgres> {
     pool
 }
 
-pub fn run(
+pub async fn run(
     listener: TcpListener,
     db_conn_pool: Pool<Postgres>,
     email_client: EmailClient,
     base_url: String,
     hmac_secret: Secret<String>,
-) -> Result<Server, std::io::Error> {
+    redis_uri: Secret<String>,
+) -> Result<Server, anyhow::Error> {
     // 用智能指针包装连接
     let db_conn_pool = web::Data::new(db_conn_pool);
     let email_client = web::Data::new(email_client);
+    
+    let secret_key = actix_web::cookie::Key::from(hmac_secret.expose_secret().as_bytes());
+    let redis_store=RedisSessionStore::new(redis_uri.expose_secret().as_str()).await?;
 
     let srv = HttpServer::new(move || {
         App::new()
+            .wrap(session_middleware(redis_store.clone(),secret_key.clone()))
             .wrap(tracing_actix_web::TracingLogger::default())
+            
             .route("/health_check", web::get().to(routes::health_check))
             .route("/subscriptions", web::post().to(routes::subscriptions))
             .route("/subscriptions/confirm", web::get().to(routes::confirm))
@@ -112,6 +118,8 @@ pub fn run(
             .route("/", web::get().to(routes::home))
             .route("/login", web::get().to(routes::login_from))
             .route("/login", web::post().to(routes::login))
+            .route("/admin/dashboard", web::get().to(routes::admin_dashboard))
+
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(web::Data::new(base_url.clone()))
@@ -121,4 +129,10 @@ pub fn run(
     .run();
 
     Ok(srv)
+}
+
+fn session_middleware<>(store: RedisSessionStore, key:Key)->SessionMiddleware<RedisSessionStore>{
+    SessionMiddleware::builder(store,key)
+    .cookie_secure(false)
+    .build()
 }

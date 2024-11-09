@@ -118,6 +118,17 @@ impl TestUser {
 }
 
 impl TestApp {
+    pub async fn get_admin_dashboard(&self) -> String {
+        self.api_client
+            .get(format!("{}/admin/dashboard", &self.address))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    }
+
     // 我们的测试将只关注 HTML 页面，因此
     // 我们不暴露底层的 reqwest::Response
     pub async fn get_login_html(&self) -> String {
