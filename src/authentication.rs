@@ -1,8 +1,7 @@
 use anyhow::Context;
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use secrecy::{ExposeSecret, Secret};
-use sqlx::{Pool, Postgres};
-
+use sqlx::{PgPool, Pool, Postgres};
+use argon2::{password_hash::SaltString, Argon2,PasswordVerifier,PasswordHasher,PasswordHash};
 #[derive(thiserror::Error, Debug)]
 pub enum AuthError {
     #[error("invalid credentials")]
@@ -98,4 +97,48 @@ async fn get_stored_credentials(
     .context("Failed to query user credentials from database.")?;
 
     Ok(row.map(|v| (v.user_id, Secret::new(v.password_hash))))
+}
+
+#[tracing::instrument(
+    name = "Change password",
+    skip(pool, user_id),
+    fields(user_id = %user_id)
+)]
+pub async fn change_password(
+    user_id: uuid::Uuid,
+    password: Secret<String>,
+    pool: &PgPool,
+) -> Result<(), anyhow::Error> {
+    let pwd_hash=tokio::task::spawn_blocking(||{
+        compute_password_hash(password)
+    }).await?
+    .context("Failed to hash password.")?;
+
+    sqlx::query(r#"
+        UPDATE users
+        SET password_hash = $1
+        WHERE user_id = $2
+    "#)
+    .bind(pwd_hash.expose_secret())
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .context("Failed to update password.")?;
+
+    Ok(())
+}
+
+fn compute_password_hash(password: Secret<String>) -> Result<Secret<String>, anyhow::Error> {
+    let salt = SaltString::generate(&mut rand::thread_rng());
+
+    let pwd_hash = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::new(15000, 2, 1, None).unwrap(),
+    )
+    .hash_password(password.expose_secret().as_bytes(), &salt)
+    .unwrap()
+    .to_string();
+
+    Ok(Secret::new(pwd_hash))
 }
