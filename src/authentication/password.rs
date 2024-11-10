@@ -105,7 +105,7 @@ async fn get_stored_credentials(
     fields(user_id = %user_id)
 )]
 pub async fn change_password(
-    user_id: uuid::Uuid,
+    user_id: &uuid::Uuid,
     password: Secret<String>,
     pool: &PgPool,
 ) -> Result<(), anyhow::Error> {

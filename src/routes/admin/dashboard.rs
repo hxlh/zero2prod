@@ -4,6 +4,8 @@ use anyhow::Context;
 use sqlx::{Pool, Postgres};
 use uuid::Uuid;
 
+use crate::authentication::UserId;
+
 // 返回一个不透明的 500，同时保留错误的根本原因以进行日志记录。
 fn e500<T>(e: T) -> actix_web::Error
 where
@@ -13,17 +15,10 @@ where
 }
 
 pub async fn admin_dashboard(
-    session: Session,
     pool: web::Data<Pool<Postgres>>,
+    user_id:web::ReqData<UserId>
 ) -> Result<HttpResponse, actix_web::Error> {
-    let username = if let Some(user_id) = session.get::<Uuid>("user_id").map_err(e500)? {
-        get_name(&pool, &user_id).await.map_err(e500)?
-    } else {
-        return Ok(HttpResponse::SeeOther()
-            .insert_header((reqwest::header::LOCATION, "/login"))
-            .finish());
-        // return Err(e500(anyhow::anyhow!("User not logged in")));
-    };
+    let username=get_name(&pool, &user_id).await.map_err(e500)?;
 
     Ok(HttpResponse::Ok()
         .content_type(ContentType::html())

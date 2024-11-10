@@ -55,6 +55,7 @@ htmlescape = "0.3"
 hmac = { version = "0.12", features = ["std"] }
 sha2 = "0.10"
 hex = "0.4"
+actix-web-lab = "0.15"
 
 [dependencies.actix-session]
 version = "0.10"

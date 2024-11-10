@@ -1,12 +1,10 @@
 use crate::{
-    authentication::{validate_credentials, AuthError, Credentials},
+    authentication::{validate_credentials, AuthError, Credentials, UserId},
     routes::admin::dashboard::get_name,
     util::{e500, see_other, see_other_with_flash_message},
 };
-use actix_session::Session;
-use actix_web::{cookie::Cookie, error::InternalError, web, HttpResponse};
+use actix_web::{error::InternalError, web, HttpResponse};
 use secrecy::{ExposeSecret, Secret};
-use uuid::Uuid;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct FormData {
@@ -16,15 +14,10 @@ pub struct FormData {
 }
 
 pub async fn change_password(
-    session: Session,
     pool: web::Data<sqlx::PgPool>,
     form: web::Form<FormData>,
+    user_id: web::ReqData<UserId>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let user_id = match session.get::<Uuid>("user_id").map_err(e500)? {
-        Some(user_id) => user_id,
-        None => return Ok(see_other("/login")),
-    };
-
     if form.new_password.expose_secret() != form.new_password_check.expose_secret() {
         return Ok(see_other_with_flash_message(
             "You entered two different new passwords - the field values must match.",
@@ -51,7 +44,7 @@ pub async fn change_password(
         };
     };
 
-    crate::authentication::change_password(user_id, form.new_password.clone(), &pool)
+    crate::authentication::change_password(&user_id, form.new_password.clone(), &pool)
         .await
         .map_err(e500)?;
 
@@ -62,15 +55,3 @@ pub async fn change_password(
     ))
 }
 
-async fn reject_anonymous_users(
-    session: Session
-) -> Result<Uuid, actix_web::Error> {
-    match session.get::<Uuid>("user_id").map_err(e500)? {
-        Some(user_id) => Ok(user_id),
-        None => {
-            let response = see_other("/login");
-            let e = anyhow::anyhow!("The user has not logged in");
-            Err(InternalError::from_response(e, response).into())
-        }
-    }
-}

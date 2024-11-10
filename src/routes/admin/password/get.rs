@@ -8,10 +8,6 @@ pub async fn change_password_form(
     request: HttpRequest,
     session: Session,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if session.get::<Uuid>("user_id").map_err(e500)?.is_none() {
-        return Ok(see_other("/login"));
-    }
-
     let error_html: String = match request.cookie("_flash") {
         Some(cookie) => {
             format!(r#"<p><i>{}</i></p>"#, cookie.value())

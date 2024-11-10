@@ -1,15 +1,17 @@
 use actix_session::{storage::RedisSessionStore, SessionMiddleware};
 use actix_web::{
-    cookie::Key, dev::Server, web::{self}, App, HttpServer
+    cookie::Key,
+    dev::Server,
+    web::{self},
+    App, HttpServer,
 };
+use actix_web_lab::middleware::from_fn;
 use secrecy::{ExposeSecret, Secret};
 use sqlx::{Connection, PgConnection, Pool, Postgres};
 use std::{net::TcpListener, time::Duration};
 
 use crate::{
-    configuration::{DatabaseSettings, Settings},
-    email_client::EmailClient,
-    routes,
+    authentication::reject_anonymous_users, configuration::{DatabaseSettings, Settings}, email_client::EmailClient, routes
 };
 
 pub struct Application {
@@ -42,7 +44,8 @@ impl Application {
             settings.app.base_url.clone(),
             settings.app.hmac_secret.clone(),
             settings.redis_uri.clone(),
-        ).await?;
+        )
+        .await?;
         Ok(Self { settings, server })
     }
 
@@ -102,13 +105,13 @@ pub async fn run(
     // 用智能指针包装连接
     let db_conn_pool = web::Data::new(db_conn_pool);
     let email_client = web::Data::new(email_client);
-    
+
     let secret_key = actix_web::cookie::Key::from(hmac_secret.expose_secret().as_bytes());
-    let redis_store=RedisSessionStore::new(redis_uri.expose_secret().as_str()).await?;
+    let redis_store = RedisSessionStore::new(redis_uri.expose_secret().as_str()).await?;
 
     let srv = HttpServer::new(move || {
         App::new()
-            .wrap(session_middleware(redis_store.clone(),secret_key.clone()))
+            .wrap(session_middleware(redis_store.clone(), secret_key.clone()))
             .wrap(tracing_actix_web::TracingLogger::default())
             
             .route("/health_check", web::get().to(routes::health_check))
@@ -118,11 +121,16 @@ pub async fn run(
             .route("/", web::get().to(routes::home))
             .route("/login", web::get().to(routes::login_from))
             .route("/login", web::post().to(routes::login))
-            .route("/admin/dashboard", web::get().to(routes::admin_dashboard))
-            .route("/admin/password",web::get().to(routes::change_password_form))
-            .route("/admin/password",web::post().to(routes::change_password))
-            .route("/admin/logout",web::post().to(routes::log_out))
-
+            
+            .service(
+                web::scope("/admin")
+                    .wrap(from_fn(reject_anonymous_users))
+                    .route("/dashboard", web::get().to(routes::admin_dashboard))
+                    .route("/password", web::get().to(routes::change_password_form))
+                    .route("/password", web::post().to(routes::change_password))
+                    .route("/logout", web::post().to(routes::log_out)),
+            )
+            
             .app_data(db_conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(web::Data::new(base_url.clone()))
@@ -134,8 +142,8 @@ pub async fn run(
     Ok(srv)
 }
 
-fn session_middleware<>(store: RedisSessionStore, key:Key)->SessionMiddleware<RedisSessionStore>{
-    SessionMiddleware::builder(store,key)
-    .cookie_secure(false)
-    .build()
+fn session_middleware(store: RedisSessionStore, key: Key) -> SessionMiddleware<RedisSessionStore> {
+    SessionMiddleware::builder(store, key)
+        .cookie_secure(false)
+        .build()
 }
